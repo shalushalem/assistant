@@ -1,5 +1,8 @@
 import { useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, TextInput, Alert, ActivityIndicator } from 'react-native';
+import { 
+  View, Text, TouchableOpacity, ScrollView, TextInput, 
+  Alert, ActivityIndicator, KeyboardAvoidingView, Platform 
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { databases, account, avatars, appwriteConfig } from '../lib/appwrite';
@@ -90,60 +93,66 @@ const ProfileSetup = () => {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#161622' }}>
-      <ScrollView contentContainerStyle={{ padding: 24 }}>
-        <Text style={{ fontSize: 24, color: 'white', fontWeight: 'bold', marginBottom: 10 }}>
-          Complete Profile
-        </Text>
+      {/* ADDED: KeyboardAvoidingView so the keyboard doesn't hide text inputs */}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView contentContainerStyle={{ padding: 24, flexGrow: 1 }}>
+          <Text style={{ fontSize: 24, color: 'white', fontWeight: 'bold', marginBottom: 10 }}>
+            Complete Profile
+          </Text>
 
-        {/* Gender */}
-        <Text style={{ color: '#CDCDE0', marginBottom: 8 }}>Gender</Text>
-        <View style={{ flexDirection: 'row' }}>
-          {['Male', 'Female', 'Other'].map(g => (
-             <OptionButton key={g} title={g} value={g} current={form.gender} onSelect={(v: string) => setForm({...form, gender: v})} />
-          ))}
-        </View>
+          {/* Gender */}
+          <Text style={{ color: '#CDCDE0', marginBottom: 8 }}>Gender</Text>
+          <View style={{ flexDirection: 'row' }}>
+            {['Male', 'Female', 'Other'].map(g => (
+               <OptionButton key={g} title={g} value={g} current={form.gender} onSelect={(v: string) => setForm({...form, gender: v})} />
+            ))}
+          </View>
 
-        {/* Age */}
-        <Text style={{ color: '#CDCDE0', marginTop: 20, marginBottom: 8 }}>Age</Text>
-        <TextInput 
-            value={form.age_range} 
-            onChangeText={(t) => setForm({...form, age_range: t})}
-            keyboardType='numeric'
-            placeholder="e.g. 24"
-            placeholderTextColor="#555"
-            style={{ backgroundColor: '#1E1E2D', color: 'white', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#232533' }} 
-        />
+          {/* Age */}
+          <Text style={{ color: '#CDCDE0', marginTop: 20, marginBottom: 8 }}>Age</Text>
+          <TextInput 
+              value={form.age_range} 
+              onChangeText={(t) => setForm({...form, age_range: t})}
+              keyboardType='numeric'
+              placeholder="e.g. 24"
+              placeholderTextColor="#555"
+              style={{ backgroundColor: '#1E1E2D', color: 'white', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#232533' }} 
+          />
 
-        {/* Body Shape */}
-        <Text style={{ color: '#CDCDE0', marginTop: 20, marginBottom: 8 }}>Body Shape</Text>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-          {['Slim', 'Athletic', 'Curvy', 'Rectangular'].map(s => (
-             <OptionButton key={s} title={s} value={s} current={form.body_shape} onSelect={(v: string) => setForm({...form, body_shape: v})} />
-          ))}
-        </View>
+          {/* Body Shape */}
+          <Text style={{ color: '#CDCDE0', marginTop: 20, marginBottom: 8 }}>Body Shape</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+            {['Slim', 'Athletic', 'Curvy', 'Rectangular'].map(s => (
+               <OptionButton key={s} title={s} value={s} current={form.body_shape} onSelect={(v: string) => setForm({...form, body_shape: v})} />
+            ))}
+          </View>
 
-        {/* Skin Tone (Integer) */}
-        <Text style={{ color: '#CDCDE0', marginTop: 20, marginBottom: 8 }}>Skin Tone Scale (1-6)</Text>
-        <View style={{ flexDirection: 'row' }}>
-          {[1, 2, 3, 4, 5, 6].map(tone => (
-             <OptionButton key={tone} title={tone.toString()} value={tone} current={form.skin_tone} onSelect={(v: number) => setForm({...form, skin_tone: v})} />
-          ))}
-        </View>
+          {/* Skin Tone (Integer) */}
+          <Text style={{ color: '#CDCDE0', marginTop: 20, marginBottom: 8 }}>Skin Tone Scale (1-6)</Text>
+          <View style={{ flexDirection: 'row' }}>
+            {[1, 2, 3, 4, 5, 6].map(tone => (
+               <OptionButton key={tone} title={tone.toString()} value={tone} current={form.skin_tone} onSelect={(v: number) => setForm({...form, skin_tone: v})} />
+            ))}
+          </View>
 
-        {/* Styles */}
-        <Text style={{ color: '#CDCDE0', marginTop: 20, marginBottom: 8 }}>Style Preference</Text>
-        <TextInput 
-            value={form.styles} 
-            onChangeText={(t) => setForm({...form, styles: t})}
-            placeholder="e.g. Streetwear"
-            placeholderTextColor="#555"
-            style={{ backgroundColor: '#1E1E2D', color: 'white', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#232533' }} 
-        />
+          {/* Styles */}
+          <Text style={{ color: '#CDCDE0', marginTop: 20, marginBottom: 8 }}>Style Preference</Text>
+          <TextInput 
+              value={form.styles} 
+              onChangeText={(t) => setForm({...form, styles: t})}
+              placeholder="e.g. Streetwear"
+              placeholderTextColor="#555"
+              style={{ backgroundColor: '#1E1E2D', color: 'white', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#232533' }} 
+          />
 
-        <TouchableOpacity onPress={submitProfile} style={{ backgroundColor: '#FF9C01', padding: 16, borderRadius: 12, marginTop: 40, alignItems: 'center' }}>
-            {loading ? <ActivityIndicator color="#161622"/> : <Text style={{ color: '#161622', fontWeight: 'bold', fontSize: 18 }}>Save & Continue</Text>}
-        </TouchableOpacity>
-      </ScrollView>
+          <TouchableOpacity onPress={submitProfile} style={{ backgroundColor: '#FF9C01', padding: 16, borderRadius: 12, marginTop: 40, alignItems: 'center' }}>
+              {loading ? <ActivityIndicator color="#161622"/> : <Text style={{ color: '#161622', fontWeight: 'bold', fontSize: 18 }}>Save & Continue</Text>}
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 };

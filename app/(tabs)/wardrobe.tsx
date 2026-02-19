@@ -61,7 +61,8 @@ export default function Wardrobe() {
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [newItemName, setNewItemName] = useState('');
   const [newItemCategory, setNewItemCategory] = useState('Tops');
-  const [newItemImage, setNewItemImage] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  
+  const [newItemImages, setNewItemImages] = useState<ImagePicker.ImagePickerAsset[]>([]);
   const [uploading, setUploading] = useState(false);
 
   // ---------------------------------------------------------
@@ -106,8 +107,8 @@ export default function Wardrobe() {
       let result;
       const options: ImagePicker.ImagePickerOptions = {
         mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [4, 3],
+        allowsEditing: false, 
+        allowsMultipleSelection: !useCamera, 
         quality: 0.8,
       };
 
@@ -119,7 +120,7 @@ export default function Wardrobe() {
       }
 
       if (!result.canceled) {
-        setNewItemImage(result.assets[0]);
+        setNewItemImages(result.assets); 
       }
     } catch (error) {
       Alert.alert('Error', 'Could not select image.');
@@ -127,79 +128,97 @@ export default function Wardrobe() {
   };
 
   // ---------------------------------------------------------
-  // 3. Upload & Save (FIXED URL LOGIC)
+  // 3. Delete Item
+  // ---------------------------------------------------------
+  const handleDeleteItem = async (docId: string, imageId: string) => {
+    Alert.alert("Delete Item", "Are you sure you want to remove this item?", [
+      { text: "Cancel", style: "cancel" },
+      { 
+        text: "Delete", 
+        style: "destructive", 
+        onPress: async () => {
+          try {
+            // 1. Always delete the database document
+            await databases.deleteDocument(databaseId, outfitCollectionId, docId);
+            
+            // 2. Only delete file if imageId exists (protects against old broken uploads)
+            if (imageId) {
+              await storage.deleteFile(storageId, imageId);
+            }
+
+            // 3. Refresh list
+            fetchItems(); 
+          } catch (error: any) {
+            Alert.alert("Error", error.message || "Could not delete item.");
+          }
+        }
+      }
+    ]);
+  };
+
+  // ---------------------------------------------------------
+  // 4. Upload & Save
   // ---------------------------------------------------------
   const handleAddItem = async () => {
-    if (!newItemImage || !newItemName) {
-      Alert.alert('Missing Fields', 'Please add an image and a name.');
+    if (newItemImages.length === 0 || !newItemName) {
+      Alert.alert('Missing Fields', 'Please add at least one image and a name.');
       return;
     }
 
     setUploading(true);
     try {
-      let filePayload;
+      for (const imageAsset of newItemImages) {
+        let filePayload;
 
-      // Platform check for File Upload (Web vs Mobile)
-      if (Platform.OS === 'web') {
-        const response = await fetch(newItemImage.uri);
-        const blob = await response.blob();
-        
-        filePayload = new File(
-          [blob], 
-          newItemImage.fileName || `photo-${Date.now()}.jpg`, 
-          { type: newItemImage.mimeType || 'image/jpeg' }
+        if (Platform.OS === 'web') {
+          const response = await fetch(imageAsset.uri);
+          const blob = await response.blob();
+          
+          filePayload = new File(
+            [blob], 
+            imageAsset.fileName || `photo-${Date.now()}.jpg`, 
+            { type: imageAsset.mimeType || 'image/jpeg' }
+          );
+        } else {
+          filePayload = {
+            name: imageAsset.fileName || `photo-${Date.now()}.jpg`,
+            type: imageAsset.mimeType || 'image/jpeg',
+            size: imageAsset.fileSize || 0,
+            uri: imageAsset.uri,
+          };
+        }
+
+        const uploadedFile = await storage.createFile(
+          storageId, 
+          'unique()',
+          filePayload as any 
         );
-      } else {
-        filePayload = {
-          name: newItemImage.fileName || `photo-${Date.now()}.jpg`,
-          type: newItemImage.mimeType || 'image/jpeg',
-          size: newItemImage.fileSize || 0,
-          uri: newItemImage.uri,
-        };
+
+        const fileUrl = `${endpoint}/storage/buckets/${storageId}/files/${uploadedFile.$id}/view?project=${projectId}`;
+
+        await databases.createDocument(
+          databaseId,
+          outfitCollectionId, 
+          'unique()',
+          {
+            name: newItemName,
+            category: newItemCategory,
+            image_url: fileUrl,  
+            user_id: user?.$id,
+            image_id: uploadedFile.$id,
+            status: 'ready',
+          }
+        );
       }
 
-      console.log(`Uploading to storage bucket: ${storageId} ...`);
-
-      // A. Upload to Storage
-      const uploadedFile = await storage.createFile(
-        storageId, 
-        'unique()',
-        filePayload as any 
-      );
-
-      // B. Construct View URL Manually (The "Promise" Fix)
-      // This ensures the URL is a plain string and not a Promise object
-      const fileUrl = `${endpoint}/storage/buckets/${storageId}/files/${uploadedFile.$id}/view?project=${projectId}`;
-
-      console.log("Generated Image URL:", fileUrl);
-
-      // C. Save to Database
-      await databases.createDocument(
-        databaseId,
-        outfitCollectionId, 
-        'unique()',
-        {
-          name: newItemName,
-          category: newItemCategory,
-          image_url: fileUrl,  // <-- Guaranteed String
-          user_id: user?.$id,
-          image_id: uploadedFile.$id,
-          status: 'ready',
-        }
-      );
-
-      Alert.alert('Success', 'Item added to your wardrobe!');
+      Alert.alert('Success', 'Item(s) added to your wardrobe!');
       
-      // Reset Form
       setIsModalVisible(false);
-      setNewItemImage(null);
+      setNewItemImages([]);
       setNewItemName('');
-      
-      // Refresh List
       fetchItems();
 
     } catch (error: any) {
-      console.error('Upload Error:', error);
       Alert.alert('Upload Failed', error.message || 'Something went wrong.');
     } finally {
       setUploading(false);
@@ -215,28 +234,31 @@ export default function Wardrobe() {
     : items.filter(item => item.category === selectedCategory);
 
   const renderItem = ({ item }: { item: OutfitItem }) => (
-    <TouchableOpacity style={styles.itemCard}>
+    <View style={styles.itemCard}>
       <Image 
         source={{ uri: item.image_url }} 
         style={styles.itemImage} 
         resizeMode="cover"
-        // Error Handler for debugging blank images
-        onError={(e) => {
-            console.log(`[Image Load Failed] Item: ${item.name}`);
-            console.log(`- Broken URL: ${item.image_url}`);
-            console.log(`- Error:`, e.nativeEvent.error);
-        }}
       />
+      
+      <TouchableOpacity 
+        style={styles.deleteButton}
+        onPress={() => handleDeleteItem(item.$id, item.image_id)}
+        activeOpacity={0.6}
+        hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }} // Makes the button easier to tap
+      >
+        <Ionicons name="trash" size={20} color="#FF4B4B" />
+      </TouchableOpacity>
+
       <View style={styles.itemInfo}>
         <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
         <Text style={styles.itemCategory}>{item.category}</Text>
       </View>
-    </TouchableOpacity>
+    </View>
   );
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>My Wardrobe</Text>
         <TouchableOpacity onPress={() => setIsModalVisible(true)}>
@@ -244,7 +266,6 @@ export default function Wardrobe() {
         </TouchableOpacity>
       </View>
 
-      {/* Categories */}
       <View style={styles.categoryContainer}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryList}>
           {CATEGORIES.map((cat) => (
@@ -269,7 +290,6 @@ export default function Wardrobe() {
         </ScrollView>
       </View>
 
-      {/* Grid */}
       {loading ? (
         <ActivityIndicator size="large" color="#FF9C01" style={{ marginTop: 50 }} />
       ) : (
@@ -290,7 +310,6 @@ export default function Wardrobe() {
         />
       )}
 
-      {/* Add Modal */}
       <Modal visible={isModalVisible} animationType="slide" presentationStyle="pageSheet">
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
@@ -301,10 +320,13 @@ export default function Wardrobe() {
           </View>
           
           <ScrollView contentContainerStyle={styles.modalContent}>
-            {/* Image Preview / Picker */}
             <View style={styles.imagePickerContainer}>
-              {newItemImage ? (
-                <Image source={{ uri: newItemImage.uri }} style={styles.previewImage} />
+              {newItemImages.length > 0 ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 15 }}>
+                  {newItemImages.map((img, index) => (
+                    <Image key={index} source={{ uri: img.uri }} style={[styles.previewImage, { marginRight: 10 }]} />
+                  ))}
+                </ScrollView>
               ) : (
                 <View style={styles.placeholderImage}>
                   <Ionicons name="shirt-outline" size={50} color="#CDCDE0" />
@@ -322,7 +344,6 @@ export default function Wardrobe() {
               </View>
             </View>
 
-            {/* Form Fields */}
             <Text style={styles.label}>Name</Text>
             <TextInput
               style={styles.input}
@@ -345,7 +366,6 @@ export default function Wardrobe() {
                ))}
             </View>
 
-            {/* Save Button */}
             <TouchableOpacity 
               style={[styles.uploadBtn, uploading && styles.disabledBtn]} 
               onPress={handleAddItem}
@@ -396,11 +416,29 @@ const styles = StyleSheet.create({
     backgroundColor: '#1E1E2D',
     borderRadius: 15,
     marginBottom: 15,
-    overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#232533',
+    position: 'relative', 
+    // REMOVED: overflow: 'hidden' -> This was blocking touches on Android
   },
-  itemImage: { width: '100%', height: 180, backgroundColor: '#232533' },
+  itemImage: { 
+    width: '100%', 
+    height: 180, 
+    backgroundColor: '#232533',
+    // ADDED: Added border radius directly to image to keep the rounded corners
+    borderTopLeftRadius: 15,
+    borderTopRightRadius: 15
+  },
+  deleteButton: { 
+    position: 'absolute', 
+    top: 8, 
+    right: 8, 
+    backgroundColor: 'rgba(0,0,0,0.6)', 
+    padding: 8, 
+    borderRadius: 20,
+    zIndex: 10,
+    elevation: 10
+  },
   itemInfo: { padding: 10 },
   itemName: { fontSize: 16, fontWeight: '600', marginBottom: 4, color: 'white' },
   itemCategory: { fontSize: 12, color: '#CDCDE0' },
@@ -408,7 +446,6 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 18, fontWeight: '500', color: '#CDCDE0' },
   emptySubtext: { fontSize: 14, color: '#7B7B8B', marginTop: 5 },
   
-  // Modal
   modalContainer: { flex: 1, backgroundColor: '#161622' },
   modalHeader: {
     flexDirection: 'row',
@@ -421,7 +458,7 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 20, fontWeight: 'bold', color: 'white' },
   modalContent: { padding: 20 },
   imagePickerContainer: { alignItems: 'center', marginBottom: 20 },
-  previewImage: { width: 200, height: 200, borderRadius: 10, marginBottom: 15 },
+  previewImage: { width: 150, height: 150, borderRadius: 10 },
   placeholderImage: {
     width: 200,
     height: 200,
@@ -433,7 +470,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#232533',
   },
-  imageButtons: { flexDirection: 'row', gap: 10 },
+  imageButtons: { flexDirection: 'row', gap: 10, marginTop: 10 },
   imageBtn: {
     flexDirection: 'row',
     alignItems: 'center',
