@@ -7,7 +7,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { databases, account, avatars, appwriteConfig } from '../lib/appwrite';
 import { useGlobalContext } from '../context/GlobalProvider';
-import { ID } from 'react-native-appwrite';
 
 const ProfileSetup = () => {
   const { setUser, setIsLogged } = useGlobalContext();
@@ -52,10 +51,11 @@ const ProfileSetup = () => {
       console.log("Sending Payload:", payload);
 
       // 3. Create Document
+      // FIX: Replaced ID.unique() with currentAccount.$id
       const newUser = await databases.createDocument(
-        appwriteConfig.databaseId,
-        appwriteConfig.userCollectionId,
-        ID.unique(),
+        appwriteConfig.databaseId!,
+        appwriteConfig.userCollectionId!,
+        currentAccount.$id, // <-- THIS IS THE CRITICAL CHANGE
         payload
       );
 
@@ -93,7 +93,6 @@ const ProfileSetup = () => {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#161622' }}>
-      {/* ADDED: KeyboardAvoidingView so the keyboard doesn't hide text inputs */}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}

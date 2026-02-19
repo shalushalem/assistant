@@ -23,38 +23,47 @@ const SignIn = () => {
     setSubmitting(true);
 
     try {
-      // 1. Create Session
-      // Note: If a session already exists, this might throw an error. 
-      // In a production app, you might want to check for an active session first.
+      // 1. Safely handle existing ghost sessions before creating a new one
+      try {
+        await account.deleteSession('current');
+      } catch (e) {
+        // Ignore error if no session exists to delete
+      }
+
+      // 2. Create New Session
       await account.createEmailPasswordSession(form.email, form.password);
 
-      // 2. Get Account Details
+      // 3. Get Auth Account Details
       const currentAccount = await account.get();
 
-      // 3. Fetch User Document from Database to check profile status
+      // 4. Fetch User Document from Database
       const currentUser = await databases.listDocuments(
-        appwriteConfig.databaseId,
-        appwriteConfig.userCollectionId,
+        appwriteConfig.databaseId!,
+        appwriteConfig.userCollectionId!,
         [Query.equal("accountId", currentAccount.$id)]
       );
 
+      // 5. Smart Routing & Global State Update
       if (currentUser.documents.length === 0) {
-        throw new Error("User data not found");
-      }
-
-      const userDoc = currentUser.documents[0];
-
-      // 4. Update Global Context
-      setUser(userDoc);
-      setIsLogged(true);
-
-      // 5. Smart Redirect Logic
-      // If critical profile fields are missing, force setup. Otherwise, go home.
-      if (!userDoc.gender || !userDoc.body_shape || !userDoc.skin_tone) {
+        // FIX: The user has an auth account but no database profile!
+        // Set global state to their auth account temporarily and force them to setup.
+        setUser(currentAccount);
+        setIsLogged(true);
         Alert.alert("Profile Incomplete", "Please complete your profile to continue.");
         router.replace("/profile-setup");
       } else {
-        router.replace("/home");
+        // The user has a complete database profile.
+        const userDoc = currentUser.documents[0];
+        setUser(userDoc);
+        setIsLogged(true);
+
+        // Double-check critical fields just in case
+        if (!userDoc.gender || !userDoc.body_shape || !userDoc.skin_tone) {
+          Alert.alert("Profile Incomplete", "Please complete your profile to continue.");
+          router.replace("/profile-setup");
+        } else {
+          router.replace("/home");
+        }
       }
       
     } catch (error: any) {
