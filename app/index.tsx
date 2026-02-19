@@ -4,16 +4,12 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useGlobalContext } from "../context/GlobalProvider";
 
 export default function App() {
-  // 1. Pull the 'user' object out of context as well
   const { loading, isLogged, user } = useGlobalContext();
 
   if (!loading && isLogged) {
-    // 2. If the user object exists but is missing a database field (like gender),
-    // it means they only have an Auth account and haven't finished setup.
     if (user && !user.gender) {
       return <Redirect href="/profile-setup" />;
     }
-    // Otherwise, they are fully set up.
     return <Redirect href="/home" />;
   }
 

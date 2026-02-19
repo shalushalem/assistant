@@ -23,41 +23,31 @@ const SignIn = () => {
     setSubmitting(true);
 
     try {
-      // 1. Safely handle existing ghost sessions before creating a new one
       try {
         await account.deleteSession('current');
       } catch (e) {
         // Ignore error if no session exists to delete
       }
 
-      // 2. Create New Session
       await account.createEmailPasswordSession(form.email, form.password);
-
-      // 3. Get Auth Account Details
       const currentAccount = await account.get();
 
-      // 4. Fetch User Document from Database
       const currentUser = await databases.listDocuments(
         appwriteConfig.databaseId!,
         appwriteConfig.userCollectionId!,
         [Query.equal("accountId", currentAccount.$id)]
       );
 
-      // 5. Smart Routing & Global State Update
       if (currentUser.documents.length === 0) {
-        // FIX: The user has an auth account but no database profile!
-        // Set global state to their auth account temporarily and force them to setup.
         setUser(currentAccount);
         setIsLogged(true);
         Alert.alert("Profile Incomplete", "Please complete your profile to continue.");
         router.replace("/profile-setup");
       } else {
-        // The user has a complete database profile.
         const userDoc = currentUser.documents[0];
         setUser(userDoc);
         setIsLogged(true);
 
-        // Double-check critical fields just in case
         if (!userDoc.gender || !userDoc.body_shape || !userDoc.skin_tone) {
           Alert.alert("Profile Incomplete", "Please complete your profile to continue.");
           router.replace("/profile-setup");
@@ -82,7 +72,6 @@ const SignIn = () => {
             Log in to AHVI
           </Text>
 
-          {/* Email Field */}
           <View style={{ marginTop: 28 }}>
             <Text style={{ fontSize: 16, color: '#CDCDE0', fontWeight: '500', marginBottom: 8 }}>Email</Text>
             <View style={{ width: '100%', height: 64, paddingHorizontal: 16, backgroundColor: '#1E1E2D', borderRadius: 16, borderWidth: 1, borderColor: '#232533', flexDirection: 'row', alignItems: 'center' }}>
@@ -98,7 +87,6 @@ const SignIn = () => {
             </View>
           </View>
 
-          {/* Password Field */}
           <View style={{ marginTop: 20 }}>
             <Text style={{ fontSize: 16, color: '#CDCDE0', fontWeight: '500', marginBottom: 8 }}>Password</Text>
             <View style={{ width: '100%', height: 64, paddingHorizontal: 16, backgroundColor: '#1E1E2D', borderRadius: 16, borderWidth: 1, borderColor: '#232533', flexDirection: 'row', alignItems: 'center' }}>
@@ -113,7 +101,6 @@ const SignIn = () => {
             </View>
           </View>
 
-          {/* Sign In Button */}
           <TouchableOpacity 
             onPress={submit}
             activeOpacity={0.7}

@@ -16,18 +16,12 @@ const SignUp = () => {
   });
 
   const submit = async () => {
-    // DEBUG LOG 1: Did the button work?
-    console.log("1. Submit Button Pressed");
-    console.log("Current Form State:", form);
-
     if (!form.username || !form.email || !form.password) {
-      console.log("Error: Missing Fields");
       Alert.alert("Error", "Please fill in all fields");
       return;
     }
 
     if (form.password.length < 8) {
-       console.log("Error: Password too short");
        Alert.alert("Error", "Password must be at least 8 characters");
        return;
     }
@@ -35,9 +29,13 @@ const SignUp = () => {
     setSubmitting(true);
     
     try {
-      console.log("2. Starting Appwrite Account Creation...");
+      // CLEAR GHOST SESSIONS BEFORE SIGNING UP
+      try {
+        await account.deleteSession('current');
+      } catch (e) {
+        // ignore
+      }
       
-      // 1. Create Appwrite Auth Account
       const newAccount = await account.create(
         ID.unique(),
         form.email,
@@ -45,18 +43,11 @@ const SignUp = () => {
         form.username
       );
 
-      console.log("3. Account Created Success:", newAccount);
-
-      // 2. Create Session (Login immediately)
-      console.log("4. Creating Session...");
       await account.createEmailPasswordSession(form.email, form.password);
       
-      console.log("5. Session Created. Updating Global State...");
       setUser(newAccount); 
       setIsLogged(true);
 
-      // 3. Redirect
-      console.log("6. Redirecting to Profile Setup...");
       router.replace("/profile-setup");
 
     } catch (error: any) {
@@ -64,7 +55,6 @@ const SignUp = () => {
       Alert.alert("Sign Up Failed", error.message);
     } finally {
       setSubmitting(false);
-      console.log("7. Process Finished (Submitting set to false)");
     }
   };
 
@@ -73,10 +63,9 @@ const SignUp = () => {
       <ScrollView>
         <View style={{ width: '100%', justifyContent: 'center', height: '100%', paddingHorizontal: 16, marginVertical: 24 }}>
           <Text style={{ fontSize: 24, color: 'white', fontWeight: 'bold', marginTop: 10 }}>
-            Sign up to AHVI (Debug Mode)
+            Sign up to AHVI
           </Text>
 
-          {/* Username */}
           <View style={{ marginTop: 28 }}>
             <Text style={{ fontSize: 16, color: '#CDCDE0', fontWeight: '500', marginBottom: 8 }}>Username</Text>
             <TextInput
@@ -88,7 +77,6 @@ const SignUp = () => {
             />
           </View>
 
-          {/* Email */}
           <View style={{ marginTop: 20 }}>
             <Text style={{ fontSize: 16, color: '#CDCDE0', fontWeight: '500', marginBottom: 8 }}>Email</Text>
             <TextInput
@@ -102,7 +90,6 @@ const SignUp = () => {
             />
           </View>
 
-          {/* Password */}
           <View style={{ marginTop: 20 }}>
             <Text style={{ fontSize: 16, color: '#CDCDE0', fontWeight: '500', marginBottom: 8 }}>Password</Text>
             <TextInput

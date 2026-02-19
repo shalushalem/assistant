@@ -13,16 +13,15 @@ const ProfileSetup = () => {
   const [loading, setLoading] = useState(false);
   
   const [form, setForm] = useState({
-    gender: 'Female', // Default to avoid empty errors
+    gender: 'Female', 
     age_range: '',
     body_shape: 'Slim',
-    skin_tone: 1, // Default integer
+    skin_tone: 1, 
     styles: '',
     shop_prefs: ''
   });
 
   const submitProfile = async () => {
-    // 1. Validation
     if (!form.age_range || !form.styles) {
       Alert.alert("Missing Fields", "Please enter your age and style preference.");
       return;
@@ -34,32 +33,26 @@ const ProfileSetup = () => {
       const currentAccount = await account.get();
       const avatarUrl = avatars.getInitials(currentAccount.name);
 
-      // 2. Prepare Payload (Ensure types match DB exactly)
       const payload = {
           accountId: currentAccount.$id,
           username: currentAccount.name,
           email: currentAccount.email,
           avatar: avatarUrl.toString(),
           gender: form.gender,
-          age_range: parseInt(form.age_range), // Must be Integer
+          age_range: parseInt(form.age_range), 
           body_shape: form.body_shape,
-          skin_tone: form.skin_tone,           // Must be Integer
+          skin_tone: form.skin_tone,           
           styles: form.styles,
           shop_prefs: form.shop_prefs || "None"
       };
 
-      console.log("Sending Payload:", payload);
-
-      // 3. Create Document
-      // FIX: Replaced ID.unique() with currentAccount.$id
       const newUser = await databases.createDocument(
         appwriteConfig.databaseId!,
         appwriteConfig.userCollectionId!,
-        currentAccount.$id, // <-- THIS IS THE CRITICAL CHANGE
+        currentAccount.$id, // MATCHES AUTH ID
         payload
       );
 
-      // 4. Success
       setUser(newUser);
       setIsLogged(true);
       router.replace('/home');
@@ -102,7 +95,6 @@ const ProfileSetup = () => {
             Complete Profile
           </Text>
 
-          {/* Gender */}
           <Text style={{ color: '#CDCDE0', marginBottom: 8 }}>Gender</Text>
           <View style={{ flexDirection: 'row' }}>
             {['Male', 'Female', 'Other'].map(g => (
@@ -110,7 +102,6 @@ const ProfileSetup = () => {
             ))}
           </View>
 
-          {/* Age */}
           <Text style={{ color: '#CDCDE0', marginTop: 20, marginBottom: 8 }}>Age</Text>
           <TextInput 
               value={form.age_range} 
@@ -121,7 +112,6 @@ const ProfileSetup = () => {
               style={{ backgroundColor: '#1E1E2D', color: 'white', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#232533' }} 
           />
 
-          {/* Body Shape */}
           <Text style={{ color: '#CDCDE0', marginTop: 20, marginBottom: 8 }}>Body Shape</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
             {['Slim', 'Athletic', 'Curvy', 'Rectangular'].map(s => (
@@ -129,7 +119,6 @@ const ProfileSetup = () => {
             ))}
           </View>
 
-          {/* Skin Tone (Integer) */}
           <Text style={{ color: '#CDCDE0', marginTop: 20, marginBottom: 8 }}>Skin Tone Scale (1-6)</Text>
           <View style={{ flexDirection: 'row' }}>
             {[1, 2, 3, 4, 5, 6].map(tone => (
@@ -137,7 +126,6 @@ const ProfileSetup = () => {
             ))}
           </View>
 
-          {/* Styles */}
           <Text style={{ color: '#CDCDE0', marginTop: 20, marginBottom: 8 }}>Style Preference</Text>
           <TextInput 
               value={form.styles} 
@@ -147,7 +135,18 @@ const ProfileSetup = () => {
               style={{ backgroundColor: '#1E1E2D', color: 'white', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#232533' }} 
           />
 
-          <TouchableOpacity onPress={submitProfile} style={{ backgroundColor: '#FF9C01', padding: 16, borderRadius: 12, marginTop: 40, alignItems: 'center' }}>
+          <TouchableOpacity 
+            onPress={submitProfile} 
+            disabled={loading} // PREVENTS DOUBLE TAP CRASHES
+            style={{ 
+              backgroundColor: '#FF9C01', 
+              padding: 16, 
+              borderRadius: 12, 
+              marginTop: 40, 
+              alignItems: 'center',
+              opacity: loading ? 0.5 : 1
+            }}
+          >
               {loading ? <ActivityIndicator color="#161622"/> : <Text style={{ color: '#161622', fontWeight: 'bold', fontSize: 18 }}>Save & Continue</Text>}
           </TouchableOpacity>
         </ScrollView>

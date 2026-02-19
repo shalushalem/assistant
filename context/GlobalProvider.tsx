@@ -1,13 +1,12 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { account } from "../lib/appwrite";
-import { Models } from "react-native-appwrite";
+import { account, databases, appwriteConfig } from "../lib/appwrite";
+import { Query } from "react-native-appwrite";
 
-// Define the shape of our Context
 interface GlobalContextType {
   isLogged: boolean;
   setIsLogged: (value: boolean) => void;
-  user: Models.User<Models.Preferences> | null;
-  setUser: (user: Models.User<Models.Preferences> | null) => void;
+  user: any | null; 
+  setUser: (user: any | null) => void;
   loading: boolean;
 }
 
@@ -21,7 +20,7 @@ export const useGlobalContext = () => {
 
 export const GlobalProvider = ({ children }: { children: ReactNode }) => {
   const [isLogged, setIsLogged] = useState(false);
-  const [user, setUser] = useState<Models.User<Models.Preferences> | null>(null);
+  const [user, setUser] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -30,10 +29,23 @@ export const GlobalProvider = ({ children }: { children: ReactNode }) => {
 
   const getCurrentUser = async () => {
     try {
-      const res = await account.get();
-      if (res) {
-        setIsLogged(true);
-        setUser(res);
+      const currentAccount = await account.get();
+      
+      if (currentAccount) {
+        // FETCH THE DB DOCUMENT, NOT JUST THE AUTH ACCOUNT
+        const currentUser = await databases.listDocuments(
+            appwriteConfig.databaseId!,
+            appwriteConfig.userCollectionId!,
+            [Query.equal("accountId", currentAccount.$id)]
+        );
+
+        if (currentUser.documents.length > 0) {
+            setIsLogged(true);
+            setUser(currentUser.documents[0]); 
+        } else {
+            setIsLogged(true);
+            setUser(currentAccount);
+        }
       } else {
         setIsLogged(false);
         setUser(null);
