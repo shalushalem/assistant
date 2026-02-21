@@ -1,12 +1,13 @@
 import { Client, Account, ID, Databases, Storage, Avatars } from 'react-native-appwrite';
 
-// 1. Safe Configuration Loading
+// Look for your appwriteConfig in lib/appwrite.ts and add memoryCollectionId
 const appwriteConfig = {
     endpoint: process.env.EXPO_PUBLIC_APPWRITE_ENDPOINT,
     projectId: process.env.EXPO_PUBLIC_APPWRITE_PROJECT_ID,
     databaseId: process.env.EXPO_PUBLIC_APPWRITE_DATABASE_ID,
     userCollectionId: process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_USERS,
     outfitCollectionId: process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_OUTFITS,
+    memoryCollectionId: process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_MEMORIES, // <--- ADD THIS
     storageId: process.env.EXPO_PUBLIC_APPWRITE_BUCKET_ID,
     platform: process.env.EXPO_PUBLIC_APPWRITE_PACKAGE_NAME,
 };

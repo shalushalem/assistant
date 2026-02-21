@@ -48,7 +48,6 @@ const TabsLayout = () => {
         }}
       />
 
-      {/* --- NEW WARDROBE TAB --- */}
       <Tabs.Screen
         name="wardrobe"
         options={{
@@ -67,6 +66,18 @@ const TabsLayout = () => {
           headerShown: false,
           tabBarIcon: ({ color, focused }) => (
             <TabIcon icon={focused ? "camera" : "camera-outline"} color={color} name="Try-On" focused={focused} />
+          ),
+        }}
+      />
+
+      {/* --- NEW CHAT TAB --- */}
+      <Tabs.Screen
+        name="chat"
+        options={{
+          title: 'AI Chat',
+          headerShown: false,
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon icon={focused ? "chatbubbles" : "chatbubbles-outline"} color={color} name="Chat" focused={focused} />
           ),
         }}
       />
