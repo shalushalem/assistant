@@ -25,7 +25,6 @@ const ChatScreen = () => {
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   
-  // State for Telegram-like chips
   const [activeChips, setActiveChips] = useState<string[]>([]);
 
   const [currentMemory, setCurrentMemory] = useState('');
@@ -35,7 +34,6 @@ const ChatScreen = () => {
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [isRecording, setIsRecording] = useState(false);
 
-  // Update this to your local server IP if needed
   const OLLAMA_ENDPOINT = 'http://192.168.29.193:8000/api/text';
 
   useEffect(() => {
@@ -127,7 +125,6 @@ const ChatScreen = () => {
     setMessages((prev) => [...prev, userMessage]);
     if (!textOverride) setInputText('');
     
-    // Clear chips when the user responds
     setActiveChips([]); 
     setIsLoading(true);
 
@@ -161,11 +158,10 @@ const ChatScreen = () => {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
           content: data.message.content,
-          images: data.images || [] // Multiple style boards
+          images: data.images || [] 
         };
         setMessages((prev) => [...prev, assistantMessage]);
 
-        // Show chips if the AI provided them
         if (data.chips && data.chips.length > 0) {
             setActiveChips(data.chips);
         }
@@ -219,28 +215,36 @@ const ChatScreen = () => {
           {item.content}
         </Text>
         
-        {/* Render multiple image style boards */}
         {item.images && item.images.length > 0 && (
-          <View style={{ marginTop: 10, gap: 10 }}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            style={{ marginTop: 10 }}
+          >
             {item.images.map((imgBase64, index) => (
               <Image 
                 key={index}
                 source={{ uri: `data:image/jpeg;base64,${imgBase64}` }} 
-                style={{ width: 250, height: 250, borderRadius: 10 }}
+                style={{ 
+                  width: 250, 
+                  height: 250, 
+                  borderRadius: 10,
+                  marginRight: 10 
+                }}
                 resizeMode="cover"
               />
             ))}
-          </View>
+          </ScrollView>
         )}
       </View>
     );
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#161622' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#161622' }} edges={['top', 'left', 'right']}>
       <KeyboardAvoidingView 
         style={{ flex: 1 }} 
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         <FlatList
@@ -248,6 +252,7 @@ const ChatScreen = () => {
           keyExtractor={(item) => item.id}
           renderItem={renderMessage}
           contentContainerStyle={{ paddingVertical: 16 }}
+          keyboardShouldPersistTaps="handled"
         />
 
         {isLoading && (
@@ -256,10 +261,9 @@ const ChatScreen = () => {
           </View>
         )}
 
-        {/* Telegram-style Quick Reply Chips UI */}
         {activeChips.length > 0 && (
           <View style={{ paddingHorizontal: 16, paddingBottom: 10, backgroundColor: '#161622' }}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               {activeChips.map((chip, index) => (
                 <TouchableOpacity 
                   key={index}
@@ -272,7 +276,7 @@ const ChatScreen = () => {
                     justifyContent: 'center',
                     alignItems: 'center'
                   }}
-                  onPress={() => sendMessage(chip)} // Sends chip text automatically
+                  onPress={() => sendMessage(chip)} 
                 >
                   <Text style={{ color: '#161622', fontWeight: 'bold' }}>{chip}</Text>
                 </TouchableOpacity>
