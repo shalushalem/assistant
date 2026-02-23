@@ -138,6 +138,7 @@ export default function Wardrobe() {
     }
   };
 
+  // --- UPDATED DELETE FUNCTION ---
   const handleDeleteItem = async (docId: string, imageId: string) => {
     Alert.alert("Delete Item", "Are you sure you want to remove this item?", [
       { text: "Cancel", style: "cancel" },
@@ -145,12 +146,19 @@ export default function Wardrobe() {
         text: "Delete", 
         style: "destructive", 
         onPress: async () => {
+          // 1. Optimistic UI Update: Instantly remove it from the screen
+          setItems((prevItems) => prevItems.filter(item => item.$id !== docId));
+
           try {
+            // 2. Delete from database
             await databases.deleteDocument(databaseId, outfitCollectionId, docId);
+            // 3. Delete from storage
             if (imageId) await storage.deleteFile(storageId, imageId);
-            fetchItems(); 
           } catch (error: any) {
+            console.error("Delete Error: ", error);
             Alert.alert("Error", error.message || "Could not delete item.");
+            // If it fails, refresh the list to bring the item back
+            fetchItems(); 
           }
         }
       }
@@ -224,7 +232,7 @@ export default function Wardrobe() {
         style={styles.deleteButton}
         onPress={() => handleDeleteItem(item.$id, item.image_id)}
         activeOpacity={0.6}
-        hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }} 
+        hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }} 
       >
         <Ionicons name="trash" size={20} color="#FF4B4B" />
       </TouchableOpacity>
@@ -388,7 +396,10 @@ const styles = StyleSheet.create({
   columnWrapper: { justifyContent: 'space-between' },
   itemCard: { width: '48%', backgroundColor: '#1E1E2D', borderRadius: 15, marginBottom: 15, borderWidth: 1, borderColor: '#232533', position: 'relative' },
   itemImage: { width: '100%', height: 180, backgroundColor: '#232533', borderTopLeftRadius: 15, borderTopRightRadius: 15 },
-  deleteButton: { position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.6)', padding: 8, borderRadius: 20, zIndex: 10, elevation: 10 },
+  
+  // --- UPDATED Z-INDEX TO FIX CLICKABILITY ---
+  deleteButton: { position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.6)', padding: 8, borderRadius: 20, zIndex: 999, elevation: 10 },
+  
   itemInfo: { padding: 10 },
   itemName: { fontSize: 16, fontWeight: '600', marginBottom: 4, color: 'white' },
   itemCategory: { fontSize: 12, color: '#CDCDE0' },

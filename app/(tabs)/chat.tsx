@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Image, ScrollView } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
+import { router } from 'expo-router'; 
 import { databases, appwriteConfig } from '../../lib/appwrite';
 import { useGlobalContext } from '../../context/GlobalProvider';
 import { ID, Query } from 'react-native-appwrite';
@@ -12,7 +13,7 @@ interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
-  images?: string[]; 
+  boardIds?: string; // <-- ADDED to remember the style board IDs for this message
 }
 
 const ChatScreen = () => {
@@ -34,6 +35,7 @@ const ChatScreen = () => {
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [isRecording, setIsRecording] = useState(false);
 
+  // Update with your local server IP
   const OLLAMA_ENDPOINT = 'http://192.168.29.193:8000/api/text';
 
   useEffect(() => {
@@ -68,7 +70,6 @@ const ChatScreen = () => {
         }));
         
         setWardrobeItems(simplifiedWardrobe);
-        console.log("✅ Wardrobe Updated! Items found:", simplifiedWardrobe.length);
       } catch (error: any) {
         console.log("❌ Error fetching user data:", error.message);
       }
@@ -78,20 +79,17 @@ const ChatScreen = () => {
 
   const startRecording = async () => {
     try {
-      console.log('🎤 Requesting mic permissions...');
       await Audio.requestPermissionsAsync();
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
       });
 
-      console.log('🎤 Starting recording...');
       const { recording } = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY
       );
       setRecording(recording);
       setIsRecording(true);
-      console.log('🎤 Recording started!');
     } catch (err) {
       console.error('❌ Failed to start recording', err);
     }
@@ -99,7 +97,6 @@ const ChatScreen = () => {
 
   const stopRecording = async () => {
     if (!recording) return;
-    console.log('⏹️ Stopping recording...');
     setIsRecording(false);
     
     await recording.stopAndUnloadAsync();
@@ -107,8 +104,6 @@ const ChatScreen = () => {
       allowsRecordingIOS: false,
     });
     
-    const uri = recording.getURI();
-    console.log('✅ Recording stopped and stored at:', uri);
     setRecording(null);
   };
 
@@ -154,11 +149,31 @@ const ChatScreen = () => {
       const data = await response.json();
 
       if (data.message) {
+        let aiResponseText = data.message.content;
+        let extractedIds: string | undefined = undefined;
+
+        // 1. Check if the AI wants to open a style board
+        const boardMatch = aiResponseText.match(/\[?STYLE_BOARD:\s*(.*?)(?:\]|\n|$)/i);
+        
+        if (boardMatch) {
+            // 2. Extract the raw IDs
+            extractedIds = boardMatch[1].trim();
+            
+            // 3. Remove the tag from the text the user sees
+            aiResponseText = aiResponseText.replace(/\[?STYLE_BOARD:.*?(\]|\n|$)/gi, '').trim();
+            
+            // 4. Redirect immediately
+            router.push({
+                pathname: '/style-board',
+                params: { ids: extractedIds }
+            });
+        }
+
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: data.message.content,
-          images: data.images || [] 
+          content: aiResponseText,
+          boardIds: extractedIds // <-- SAVE the IDs in the message state
         };
         setMessages((prev) => [...prev, assistantMessage]);
 
@@ -211,31 +226,32 @@ const ChatScreen = () => {
         borderRadius: 16,
         maxWidth: '80%',
       }}>
-        <Text style={{ color: isUser ? '#FFFFFF' : '#CDCDE0', fontSize: 16 }}>
-          {item.content}
-        </Text>
+        {item.content ? (
+            <Text style={{ color: isUser ? '#FFFFFF' : '#CDCDE0', fontSize: 16 }}>
+            {item.content}
+            </Text>
+        ) : null}
         
-        {item.images && item.images.length > 0 && (
-          <ScrollView 
-            horizontal 
-            showsHorizontalScrollIndicator={false}
-            style={{ marginTop: 10 }}
+        {/* NEW: Render a button to view the style board if IDs exist */}
+        {item.boardIds && (
+          <TouchableOpacity 
+            style={{
+              marginTop: 10,
+              backgroundColor: '#161622',
+              paddingVertical: 10,
+              paddingHorizontal: 16,
+              borderRadius: 12,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderWidth: 1,
+              borderColor: '#FF9C01'
+            }}
+            onPress={() => router.push({ pathname: '/style-board', params: { ids: item.boardIds } })}
           >
-            {item.images.map((imgBase64, index) => (
-              <Image 
-                key={index}
-                source={{ uri: `data:image/jpeg;base64,${imgBase64}` }} 
-                style={{ 
-                  width: 320,        // <-- INCREASED WIDTH
-                  height: 140,       // <-- DECREASED HEIGHT
-                  borderRadius: 10,
-                  marginRight: 10,
-                  backgroundColor: '#FFFFFF' // <-- ADDED WHITE BACKGROUND
-                }}
-                resizeMode="contain" // <-- CHANGED TO CONTAIN
-              />
-            ))}
-          </ScrollView>
+            <Ionicons name="sparkles" size={16} color="#FF9C01" style={{ marginRight: 6 }} />
+            <Text style={{ color: '#FF9C01', fontWeight: 'bold', fontSize: 14 }}>View Style Board</Text>
+          </TouchableOpacity>
         )}
       </View>
     );
