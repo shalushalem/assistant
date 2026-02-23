@@ -23,6 +23,7 @@ const StyleBoardScreen = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isShuffling, setIsShuffling] = useState(false);
   
+  // --- NEW: Lock State ---
   const [lockedIds, setLockedIds] = useState<string[]>([]);
   
   const [isSavedOpen, setIsSavedOpen] = useState(false);
@@ -50,7 +51,6 @@ const StyleBoardScreen = () => {
       const allItems = response.documents as unknown as WardrobeItem[];
       setFullWardrobe(allItems);
 
-      // Maintain the order of the IDs provided by the LLM
       const selectedItems = allItems.filter(doc => targetIds.includes(doc.$id));
       setItems(selectedItems);
     } catch (error) {
@@ -60,17 +60,20 @@ const StyleBoardScreen = () => {
     }
   };
 
+  // --- NEW: Toggle Lock Logic ---
   const toggleLock = (id: string) => {
     setLockedIds(prev => 
       prev.includes(id) ? prev.filter(lockedId => lockedId !== id) : [...prev, id]
     );
   };
 
+  // --- UPDATED: Smart Shuffle with Locks ---
   const handleShuffle = () => {
     setIsShuffling(true);
     
     setTimeout(() => {
       const shuffledOutfit = items.map(currentItem => {
+        // If the item is locked, do NOT swap it
         if (lockedIds.includes(currentItem.$id)) {
           return currentItem;
         }
@@ -97,15 +100,9 @@ const StyleBoardScreen = () => {
     alert("Style Board Saved!");
   };
 
-  // --- SMARTER MAIN PIECE DETECTION ---
-  const mainPieceKeywords = ['top', 'dress', 'shirt', 't-shirt', 'jacket', 'sweater', 'suit', 'kurta', 'hoodie'];
-  const mainPiece = items.find(item => 
-    mainPieceKeywords.some(keyword => item.category?.toLowerCase().includes(keyword))
-  ) || items[0]; // Fallback to the first item if no keyword matches
-
+  const mainPiece = items.find(item => item.category?.toLowerCase() === 'top' || item.category?.toLowerCase() === 'dress') || items[0];
   const sideItems = items.filter(item => item.$id !== mainPiece?.$id);
   
-  // Distribute remaining items evenly between left and right columns
   const leftColumnItems = sideItems.filter((_, index) => index % 2 === 0);
   const rightColumnItems = sideItems.filter((_, index) => index % 2 !== 0);
 
@@ -135,7 +132,7 @@ const StyleBoardScreen = () => {
             <Text style={styles.emptyText}>Ahvi couldn't find those items.{'\n'}Try generating a new look.</Text>
           </View>
         ) : (
-          <ScrollView contentContainerStyle={styles.canvas} showsVerticalScrollIndicator={false}>
+          <ScrollView contentContainerStyle={styles.canvas}>
             {/* Left Column */}
             <View style={styles.sideColumn}>
               {leftColumnItems.map(item => (
@@ -150,7 +147,7 @@ const StyleBoardScreen = () => {
                       )}
                     </View>
                   </TouchableOpacity>
-                  <Text style={styles.sideName} numberOfLines={2}>{item.name}</Text>
+                  <Text style={styles.sideName} numberOfLines={1}>{item.name}</Text>
                 </View>
               ))}
             </View>
@@ -172,7 +169,7 @@ const StyleBoardScreen = () => {
                   </View>
                 </TouchableOpacity>
                 <Text style={styles.centerTag}>{mainPiece.category}</Text>
-                <Text style={styles.centerName} numberOfLines={2}>{mainPiece.name}</Text>
+                <Text style={styles.centerName}>{mainPiece.name}</Text>
               </View>
             )}
 
@@ -190,7 +187,7 @@ const StyleBoardScreen = () => {
                       )}
                     </View>
                   </TouchableOpacity>
-                  <Text style={styles.sideName} numberOfLines={2}>{item.name}</Text>
+                  <Text style={styles.sideName} numberOfLines={1}>{item.name}</Text>
                 </View>
               ))}
             </View>
@@ -267,7 +264,7 @@ const styles = StyleSheet.create({
   canvas: {
     flexDirection: 'row',
     justifyContent: 'center',
-    alignItems: 'center', // <-- Restored to 'center' for perfect masonry anchoring
+    alignItems: 'center',
     paddingVertical: 40,
     paddingHorizontal: 10,
     gap: 15,
@@ -305,7 +302,7 @@ const styles = StyleSheet.create({
     position: 'relative'
   },
   lockedBorderCenter: {
-    borderColor: '#FF4C4C', 
+    borderColor: '#FF4C4C', // A slightly different color (red/orange) to emphasize the main piece lock, or keep it #FF9C01
     borderWidth: 4,
   },
   lockIconOverlayCenter: {
@@ -324,8 +321,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12,
   },
   sigBadgeText: { color: '#161622', fontSize: 10, fontWeight: 'bold', textTransform: 'uppercase' },
-  centerTag: { color: '#FF9C01', fontSize: 10, textTransform: 'uppercase', marginBottom: 4, fontWeight: 'bold', textAlign: 'center' },
-  centerName: { color: '#FFFFFF', fontSize: 18, fontStyle: 'italic', fontWeight: '600', textAlign: 'center' },
+  centerTag: { color: '#FF9C01', fontSize: 10, textTransform: 'uppercase', marginBottom: 4, fontWeight: 'bold' },
+  centerName: { color: '#FFFFFF', fontSize: 18, fontStyle: 'italic', fontWeight: '600' },
   imageFull: { width: '100%', height: '100%' },
   bottomBar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

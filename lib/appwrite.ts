@@ -10,6 +10,7 @@ const appwriteConfig = {
     memoryCollectionId: process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_MEMORIES, // <--- ADD THIS
     storageId: process.env.EXPO_PUBLIC_APPWRITE_BUCKET_ID,
     platform: process.env.EXPO_PUBLIC_APPWRITE_PACKAGE_NAME,
+    savedBoardsCollectionId: process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_SAVED_BOARDS,
 };
 
 // 2. Debug Check (Remove this in production if you want)
