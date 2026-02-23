@@ -226,12 +226,13 @@ const ChatScreen = () => {
                 key={index}
                 source={{ uri: `data:image/jpeg;base64,${imgBase64}` }} 
                 style={{ 
-                  width: 250, 
-                  height: 250, 
+                  width: 320,        // <-- INCREASED WIDTH
+                  height: 140,       // <-- DECREASED HEIGHT
                   borderRadius: 10,
-                  marginRight: 10 
+                  marginRight: 10,
+                  backgroundColor: '#FFFFFF' // <-- ADDED WHITE BACKGROUND
                 }}
-                resizeMode="cover"
+                resizeMode="contain" // <-- CHANGED TO CONTAIN
               />
             ))}
           </ScrollView>
