@@ -6,8 +6,8 @@ import { useIsFocused } from '@react-navigation/native';
 import { databases, appwriteConfig } from '../../lib/appwrite';
 import { useGlobalContext } from '../../context/GlobalProvider';
 import { ID, Query } from 'react-native-appwrite';
+import { Audio } from 'expo-av'; // --- NEW: Import Audio from expo-av ---
 
-// --- NEW: Added 'image' to the interface ---
 interface Message {
   id: string;
   role: 'user' | 'assistant';
@@ -29,12 +29,15 @@ const ChatScreen = () => {
   const [memoryDocId, setMemoryDocId] = useState<string | null>(null);
   const [wardrobeItems, setWardrobeItems] = useState<any[]>([]);
 
+  // --- NEW: Audio Recording States ---
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+
   const OLLAMA_ENDPOINT = 'http://192.168.29.193:8000/api/text';
 
   useEffect(() => {
     const fetchData = async () => {
       if (!user?.$id || !isFocused) return;
-      
       try {
         console.log("🔄 Ahvi is refreshing her eyes...");
 
@@ -55,7 +58,6 @@ const ChatScreen = () => {
           [Query.equal('user_id', user.$id)] 
         );
 
-        // --- NEW: Appending $id and image_url so the Collage Engine can use them! ---
         const simplifiedWardrobe = wardrobeResponse.documents.map(doc => ({
           id: doc.$id,
           name: doc.name || "Unnamed Item",
@@ -66,14 +68,52 @@ const ChatScreen = () => {
         
         setWardrobeItems(simplifiedWardrobe);
         console.log("✅ Wardrobe Updated! Items found:", simplifiedWardrobe.length);
-
       } catch (error: any) {
         console.log("❌ Error fetching user data:", error.message);
       }
     };
-
     fetchData();
   }, [user, isFocused]);
+
+  // --- NEW: Start Recording Function ---
+  const startRecording = async () => {
+    try {
+      console.log('🎤 Requesting mic permissions...');
+      await Audio.requestPermissionsAsync();
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+
+      console.log('🎤 Starting recording...');
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+      setRecording(recording);
+      setIsRecording(true);
+      console.log('🎤 Recording started!');
+    } catch (err) {
+      console.error('❌ Failed to start recording', err);
+    }
+  };
+
+  // --- NEW: Stop Recording Function ---
+  const stopRecording = async () => {
+    if (!recording) return;
+    console.log('⏹️ Stopping recording...');
+    setIsRecording(false);
+    
+    await recording.stopAndUnloadAsync();
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: false,
+    });
+    
+    const uri = recording.getURI();
+    console.log('✅ Recording stopped and stored at:', uri);
+    setRecording(null);
+
+    // TODO in Step 3: Send this 'uri' to FastAPI!
+  };
 
   const sendMessage = async () => {
     if (!inputText.trim()) return;
@@ -118,13 +158,12 @@ const ChatScreen = () => {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
           content: data.message.content,
-          image: data.image // --- NEW: Catch the Base64 image from Python ---
+          image: data.image 
         };
         setMessages((prev) => [...prev, assistantMessage]);
 
         if (data.updated_memory && data.updated_memory !== currentMemory && user?.$id) {
           setCurrentMemory(data.updated_memory);
-          
           if (memoryDocId) {
             await databases.updateDocument(
               appwriteConfig.databaseId!,
@@ -171,8 +210,6 @@ const ChatScreen = () => {
         <Text style={{ color: isUser ? '#FFFFFF' : '#CDCDE0', fontSize: 16 }}>
           {item.content}
         </Text>
-
-        {/* --- NEW: Display the Style Board Image! --- */}
         {item.image && (
           <Image 
             source={{ uri: `data:image/jpeg;base64,${item.image}` }} 
@@ -227,21 +264,43 @@ const ChatScreen = () => {
             onChangeText={setInputText}
             multiline
           />
-          <TouchableOpacity 
-            onPress={sendMessage}
-            disabled={isLoading || !inputText.trim()}
-            style={{
-              backgroundColor: '#FF9C01',
-              borderRadius: 20,
-              width: 44,
-              height: 44,
-              justifyContent: 'center',
-              alignItems: 'center',
-              opacity: (isLoading || !inputText.trim()) ? 0.5 : 1
-            }}
-          >
-            <Ionicons name="send" size={20} color="#FFFFFF" />
-          </TouchableOpacity>
+          
+          {/* --- NEW: Conditional Button (Send Icon OR Mic Icon) --- */}
+          {inputText.trim() ? (
+            <TouchableOpacity 
+              onPress={sendMessage}
+              disabled={isLoading}
+              style={{
+                backgroundColor: '#FF9C01',
+                borderRadius: 20,
+                width: 44,
+                height: 44,
+                justifyContent: 'center',
+                alignItems: 'center',
+                opacity: isLoading ? 0.5 : 1
+              }}
+            >
+              <Ionicons name="send" size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity 
+              onPressIn={startRecording}
+              onPressOut={stopRecording}
+              disabled={isLoading}
+              style={{
+                backgroundColor: isRecording ? '#FF4C4C' : '#FF9C01', // Turns red while holding!
+                borderRadius: 20,
+                width: 44,
+                height: 44,
+                justifyContent: 'center',
+                alignItems: 'center',
+                opacity: isLoading ? 0.5 : 1,
+                transform: [{ scale: isRecording ? 1.2 : 1 }] // Slightly enlarges when pressed
+              }}
+            >
+              <Ionicons name="mic" size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+          )}
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
