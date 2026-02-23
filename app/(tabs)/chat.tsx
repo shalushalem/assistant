@@ -1,18 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Image } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Image, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
 import { databases, appwriteConfig } from '../../lib/appwrite';
 import { useGlobalContext } from '../../context/GlobalProvider';
 import { ID, Query } from 'react-native-appwrite';
-import { Audio } from 'expo-av'; // --- NEW: Import Audio from expo-av ---
+import { Audio } from 'expo-av'; 
 
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
-  image?: string; 
+  images?: string[]; 
 }
 
 const ChatScreen = () => {
@@ -25,14 +25,17 @@ const ChatScreen = () => {
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   
+  // State for Telegram-like chips
+  const [activeChips, setActiveChips] = useState<string[]>([]);
+
   const [currentMemory, setCurrentMemory] = useState('');
   const [memoryDocId, setMemoryDocId] = useState<string | null>(null);
   const [wardrobeItems, setWardrobeItems] = useState<any[]>([]);
 
-  // --- NEW: Audio Recording States ---
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [isRecording, setIsRecording] = useState(false);
 
+  // Update this to your local server IP if needed
   const OLLAMA_ENDPOINT = 'http://192.168.29.193:8000/api/text';
 
   useEffect(() => {
@@ -75,7 +78,6 @@ const ChatScreen = () => {
     fetchData();
   }, [user, isFocused]);
 
-  // --- NEW: Start Recording Function ---
   const startRecording = async () => {
     try {
       console.log('🎤 Requesting mic permissions...');
@@ -97,7 +99,6 @@ const ChatScreen = () => {
     }
   };
 
-  // --- NEW: Stop Recording Function ---
   const stopRecording = async () => {
     if (!recording) return;
     console.log('⏹️ Stopping recording...');
@@ -111,21 +112,23 @@ const ChatScreen = () => {
     const uri = recording.getURI();
     console.log('✅ Recording stopped and stored at:', uri);
     setRecording(null);
-
-    // TODO in Step 3: Send this 'uri' to FastAPI!
   };
 
-  const sendMessage = async () => {
-    if (!inputText.trim()) return;
+  const sendMessage = async (textOverride?: string) => {
+    const textToSend = textOverride || inputText;
+    if (!textToSend.trim()) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
-      content: inputText.trim(),
+      content: textToSend.trim(),
     };
 
     setMessages((prev) => [...prev, userMessage]);
-    setInputText('');
+    if (!textOverride) setInputText('');
+    
+    // Clear chips when the user responds
+    setActiveChips([]); 
     setIsLoading(true);
 
     try {
@@ -158,9 +161,14 @@ const ChatScreen = () => {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
           content: data.message.content,
-          image: data.image 
+          images: data.images || [] // Multiple style boards
         };
         setMessages((prev) => [...prev, assistantMessage]);
+
+        // Show chips if the AI provided them
+        if (data.chips && data.chips.length > 0) {
+            setActiveChips(data.chips);
+        }
 
         if (data.updated_memory && data.updated_memory !== currentMemory && user?.$id) {
           setCurrentMemory(data.updated_memory);
@@ -210,12 +218,19 @@ const ChatScreen = () => {
         <Text style={{ color: isUser ? '#FFFFFF' : '#CDCDE0', fontSize: 16 }}>
           {item.content}
         </Text>
-        {item.image && (
-          <Image 
-            source={{ uri: `data:image/jpeg;base64,${item.image}` }} 
-            style={{ width: 250, height: 180, borderRadius: 10, marginTop: 10 }}
-            resizeMode="contain"
-          />
+        
+        {/* Render multiple image style boards */}
+        {item.images && item.images.length > 0 && (
+          <View style={{ marginTop: 10, gap: 10 }}>
+            {item.images.map((imgBase64, index) => (
+              <Image 
+                key={index}
+                source={{ uri: `data:image/jpeg;base64,${imgBase64}` }} 
+                style={{ width: 250, height: 250, borderRadius: 10 }}
+                resizeMode="cover"
+              />
+            ))}
+          </View>
         )}
       </View>
     );
@@ -238,6 +253,31 @@ const ChatScreen = () => {
         {isLoading && (
           <View style={{ padding: 10, alignItems: 'flex-start', marginLeft: 16 }}>
              <ActivityIndicator color="#FF9C01" />
+          </View>
+        )}
+
+        {/* Telegram-style Quick Reply Chips UI */}
+        {activeChips.length > 0 && (
+          <View style={{ paddingHorizontal: 16, paddingBottom: 10, backgroundColor: '#161622' }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              {activeChips.map((chip, index) => (
+                <TouchableOpacity 
+                  key={index}
+                  style={{ 
+                    backgroundColor: '#FF9C01', 
+                    paddingVertical: 8, 
+                    paddingHorizontal: 16, 
+                    borderRadius: 20, 
+                    marginRight: 10,
+                    justifyContent: 'center',
+                    alignItems: 'center'
+                  }}
+                  onPress={() => sendMessage(chip)} // Sends chip text automatically
+                >
+                  <Text style={{ color: '#161622', fontWeight: 'bold' }}>{chip}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
           </View>
         )}
 
@@ -265,10 +305,9 @@ const ChatScreen = () => {
             multiline
           />
           
-          {/* --- NEW: Conditional Button (Send Icon OR Mic Icon) --- */}
           {inputText.trim() ? (
             <TouchableOpacity 
-              onPress={sendMessage}
+              onPress={() => sendMessage()}
               disabled={isLoading}
               style={{
                 backgroundColor: '#FF9C01',
@@ -288,14 +327,14 @@ const ChatScreen = () => {
               onPressOut={stopRecording}
               disabled={isLoading}
               style={{
-                backgroundColor: isRecording ? '#FF4C4C' : '#FF9C01', // Turns red while holding!
+                backgroundColor: isRecording ? '#FF4C4C' : '#FF9C01', 
                 borderRadius: 20,
                 width: 44,
                 height: 44,
                 justifyContent: 'center',
                 alignItems: 'center',
                 opacity: isLoading ? 0.5 : 1,
-                transform: [{ scale: isRecording ? 1.2 : 1 }] // Slightly enlarges when pressed
+                transform: [{ scale: isRecording ? 1.2 : 1 }] 
               }}
             >
               <Ionicons name="mic" size={20} color="#FFFFFF" />
