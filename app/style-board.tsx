@@ -7,6 +7,19 @@ import { databases, appwriteConfig } from '../lib/appwrite';
 import { useGlobalContext } from '../context/GlobalProvider';
 import { Query } from 'react-native-appwrite';
 
+// --- HELPER: Identify item types robustly ---
+const getCategoryType = (category = '') => {
+  const cat = category.toLowerCase();
+  const tops = ['top', 'shirt', 't-shirt', 'blouse', 'sweater', 'hoodie', 'jacket', 'outer', 'dress'];
+  const bottoms = ['bottom', 'pant', 'jeans', 'skirt', 'short', 'trouser', 'cargo'];
+  const footwears = ['shoe', 'sneaker', 'heel', 'boot', 'sandal', 'footwear', 'flat'];
+
+  if (tops.some(kw => cat.includes(kw))) return 'top';
+  if (bottoms.some(kw => cat.includes(kw))) return 'bottom';
+  if (footwears.some(kw => cat.includes(kw))) return 'footwear';
+  return 'accessory';
+};
+
 interface WardrobeItem {
   $id: string;
   name: string;
@@ -23,9 +36,7 @@ const StyleBoardScreen = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isShuffling, setIsShuffling] = useState(false);
   
-  // --- NEW: Lock State ---
   const [lockedIds, setLockedIds] = useState<string[]>([]);
-  
   const [isSavedOpen, setIsSavedOpen] = useState(false);
   const [savedBoards, setSavedBoards] = useState<any[]>([]); 
 
@@ -60,28 +71,28 @@ const StyleBoardScreen = () => {
     }
   };
 
-  // --- NEW: Toggle Lock Logic ---
   const toggleLock = (id: string) => {
     setLockedIds(prev => 
       prev.includes(id) ? prev.filter(lockedId => lockedId !== id) : [...prev, id]
     );
   };
 
-  // --- UPDATED: Smart Shuffle with Locks ---
+  // --- UPDATED: Smart Shuffle based on broad category ---
   const handleShuffle = () => {
     setIsShuffling(true);
     
     setTimeout(() => {
       const shuffledOutfit = items.map(currentItem => {
-        // If the item is locked, do NOT swap it
         if (lockedIds.includes(currentItem.$id)) {
           return currentItem;
         }
 
-        const alternatives = fullWardrobe.filter(
-          wardrobeItem => 
-            wardrobeItem.category?.toLowerCase() === currentItem.category?.toLowerCase() && 
-            wardrobeItem.$id !== currentItem.$id
+        const currentType = getCategoryType(currentItem.category);
+        
+        // Find alternatives of the SAME broader type (e.g., any bottom for a bottom)
+        const alternatives = fullWardrobe.filter(wardrobeItem => 
+          getCategoryType(wardrobeItem.category) === currentType && 
+          wardrobeItem.$id !== currentItem.$id
         );
 
         if (alternatives.length > 0) {
@@ -100,11 +111,30 @@ const StyleBoardScreen = () => {
     alert("Style Board Saved!");
   };
 
-  const mainPiece = items.find(item => item.category?.toLowerCase() === 'top' || item.category?.toLowerCase() === 'dress') || items[0];
+  // --- NEW: Smart Column Distributor ---
+  const mainPiece = items.find(item => getCategoryType(item.category) === 'top') || items[0];
   const sideItems = items.filter(item => item.$id !== mainPiece?.$id);
   
-  const leftColumnItems = sideItems.filter((_, index) => index % 2 === 0);
-  const rightColumnItems = sideItems.filter((_, index) => index % 2 !== 0);
+  const leftColumnItems: WardrobeItem[] = [];
+  const rightColumnItems: WardrobeItem[] = [];
+
+  const bottomPiece = sideItems.find(item => getCategoryType(item.category) === 'bottom');
+  const footwearPiece = sideItems.find(item => getCategoryType(item.category) === 'footwear');
+  const accessoryPieces = sideItems.filter(item => getCategoryType(item.category) === 'accessory');
+  const leftovers = sideItems.filter(item => item !== bottomPiece && item !== footwearPiece && !accessoryPieces.includes(item));
+
+  // Balance the layout logically
+  if (bottomPiece) leftColumnItems.push(bottomPiece);
+  if (footwearPiece) rightColumnItems.push(footwearPiece);
+  
+  if (accessoryPieces.length > 0) leftColumnItems.push(accessoryPieces[0]);
+  if (accessoryPieces.length > 1) rightColumnItems.push(accessoryPieces[1]);
+
+  // Fail-safe for any weird backend anomalies
+  leftovers.forEach(item => {
+    if (leftColumnItems.length <= rightColumnItems.length) leftColumnItems.push(item);
+    else rightColumnItems.push(item);
+  });
 
   return (
     <SafeAreaView style={styles.container}>
@@ -133,7 +163,7 @@ const StyleBoardScreen = () => {
           </View>
         ) : (
           <ScrollView contentContainerStyle={styles.canvas}>
-            {/* Left Column */}
+            {/* Left Column (Bottoms & Acc 1) */}
             <View style={styles.sideColumn}>
               {leftColumnItems.map(item => (
                 <View key={item.$id} style={styles.sideItem}>
@@ -147,7 +177,7 @@ const StyleBoardScreen = () => {
                       )}
                     </View>
                   </TouchableOpacity>
-                  <Text style={styles.sideName} numberOfLines={1}>{item.name}</Text>
+                  <Text style={styles.sideName} numberOfLines={1}>{item.category || 'Item'}</Text>
                 </View>
               ))}
             </View>
@@ -173,7 +203,7 @@ const StyleBoardScreen = () => {
               </View>
             )}
 
-            {/* Right Column */}
+            {/* Right Column (Footwear & Acc 2) */}
             <View style={styles.sideColumn}>
               {rightColumnItems.map(item => (
                 <View key={item.$id} style={styles.sideItem}>
@@ -187,7 +217,7 @@ const StyleBoardScreen = () => {
                       )}
                     </View>
                   </TouchableOpacity>
-                  <Text style={styles.sideName} numberOfLines={1}>{item.name}</Text>
+                  <Text style={styles.sideName} numberOfLines={1}>{item.category || 'Item'}</Text>
                 </View>
               ))}
             </View>
@@ -271,7 +301,7 @@ const styles = StyleSheet.create({
   },
   emptyState: { alignItems: 'center', opacity: 0.6 },
   emptyText: { color: '#CDCDE0', textAlign: 'center', marginTop: 10, fontSize: 16, fontStyle: 'italic' },
-  sideColumn: { flexDirection: 'column', gap: 20, width: 90 },
+  sideColumn: { flexDirection: 'column', justifyContent: 'center', gap: 20, width: 90 },
   sideItem: { alignItems: 'center', gap: 8 },
   sideFrame: {
     width: 80, height: 100, borderRadius: 12, backgroundColor: '#FFFFFF', overflow: 'hidden',
@@ -302,7 +332,7 @@ const styles = StyleSheet.create({
     position: 'relative'
   },
   lockedBorderCenter: {
-    borderColor: '#FF4C4C', // A slightly different color (red/orange) to emphasize the main piece lock, or keep it #FF9C01
+    borderColor: '#FF4C4C', 
     borderWidth: 4,
   },
   lockIconOverlayCenter: {
@@ -322,7 +352,7 @@ const styles = StyleSheet.create({
   },
   sigBadgeText: { color: '#161622', fontSize: 10, fontWeight: 'bold', textTransform: 'uppercase' },
   centerTag: { color: '#FF9C01', fontSize: 10, textTransform: 'uppercase', marginBottom: 4, fontWeight: 'bold' },
-  centerName: { color: '#FFFFFF', fontSize: 18, fontStyle: 'italic', fontWeight: '600' },
+  centerName: { color: '#FFFFFF', fontSize: 18, fontStyle: 'italic', fontWeight: '600', textAlign: 'center' },
   imageFull: { width: '100%', height: '100%' },
   bottomBar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
