@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
@@ -8,12 +8,14 @@ import { databases, appwriteConfig } from '../../lib/appwrite';
 import { useGlobalContext } from '../../context/GlobalProvider';
 import { ID, Query } from 'react-native-appwrite';
 import { Audio } from 'expo-av'; 
+import * as Speech from 'expo-speech'; 
+import * as FileSystem from 'expo-file-system/legacy'; // <-- EXPO SDK 54 FIX IS RIGHT HERE!
 
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
-  boardIds?: string; // <-- ADDED to remember the style board IDs for this message
+  boardIds?: string; 
 }
 
 const ChatScreen = () => {
@@ -25,9 +27,7 @@ const ChatScreen = () => {
   ]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  
   const [activeChips, setActiveChips] = useState<string[]>([]);
-
   const [currentMemory, setCurrentMemory] = useState('');
   const [memoryDocId, setMemoryDocId] = useState<string | null>(null);
   const [wardrobeItems, setWardrobeItems] = useState<any[]>([]);
@@ -36,14 +36,21 @@ const ChatScreen = () => {
   const [isRecording, setIsRecording] = useState(false);
 
   // Update with your local server IP
-  const OLLAMA_ENDPOINT = 'http://192.168.29.193:8000/api/text';
+  const SERVER_IP = 'http://192.168.29.193:8000';
+  const OLLAMA_ENDPOINT = `${SERVER_IP}/api/text`;
+  const TRANSCRIBE_ENDPOINT = `${SERVER_IP}/api/transcribe`;
+
+  // Stop Ahvi from talking if we leave the screen
+  useEffect(() => {
+    if (!isFocused) {
+      Speech.stop();
+    }
+  }, [isFocused]);
 
   useEffect(() => {
     const fetchData = async () => {
       if (!user?.$id || !isFocused) return;
       try {
-        console.log("🔄 Ahvi is refreshing her eyes...");
-
         const memResponse = await databases.listDocuments(
           appwriteConfig.databaseId!,
           appwriteConfig.memoryCollectionId!,
@@ -79,19 +86,29 @@ const ChatScreen = () => {
 
   const startRecording = async () => {
     try {
+      // 1. SAFETY LOCK: Prevent double-tapping the mic
+      if (recording) {
+        console.log("Already recording, ignoring tap.");
+        return; 
+      }
+
+      Speech.stop(); // Stop Ahvi if she is currently talking
       await Audio.requestPermissionsAsync();
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
       });
 
-      const { recording } = await Audio.Recording.createAsync(
+      const { recording: newRecording } = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY
       );
-      setRecording(recording);
+      
+      setRecording(newRecording);
       setIsRecording(true);
     } catch (err) {
       console.error('❌ Failed to start recording', err);
+      setRecording(null); 
+      setIsRecording(false);
     }
   };
 
@@ -99,17 +116,82 @@ const ChatScreen = () => {
     if (!recording) return;
     setIsRecording(false);
     
-    await recording.stopAndUnloadAsync();
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
-    });
-    
-    setRecording(null);
+    try {
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI(); 
+      
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+      });
+      
+      // 2. SAFETY UNLOCK: Clear the recording from state immediately
+      setRecording(null); 
+
+      // If we got a file, send it to the backend to be transcribed!
+      if (uri) {
+          transcribeAudio(uri);
+      }
+    } catch (err) {
+      console.error('❌ Failed to stop recording cleanly', err);
+      setRecording(null); 
+    }
+  };
+
+  // --- Send audio to Python backend ---
+  const transcribeAudio = async (uri: string) => {
+    setIsLoading(true);
+    try {
+      console.log(`📤 Uploading audio to server from ${Platform.OS}...`);
+      let data;
+
+      if (Platform.OS === 'web') {
+        // --- WEB BROWSER UPLOAD METHOD ---
+        const localResponse = await fetch(uri);
+        const audioBlob = await localResponse.blob();
+        
+        const formData = new FormData();
+        formData.append('file', audioBlob, 'audio_record.webm');
+
+        const serverResponse = await fetch(TRANSCRIBE_ENDPOINT, {
+          method: 'POST',
+          body: formData,
+        });
+        
+        if (!serverResponse.ok) throw new Error(`Server returned ${serverResponse.status}`);
+        data = await serverResponse.json();
+
+      } else {
+        // --- NATIVE PHONE (Android/iOS) UPLOAD METHOD ---
+        const response = await FileSystem.uploadAsync(TRANSCRIBE_ENDPOINT, uri, {
+          fieldName: 'file',
+          httpMethod: 'POST',
+          uploadType: 1, // '1' is the raw numerical value for MULTIPART
+          mimeType: 'audio/m4a', 
+        });
+        data = JSON.parse(response.body);
+      }
+      
+      // Handle the response from Python
+      if (data.text) {
+        console.log("✅ Ahvi heard:", data.text);
+        sendMessage(data.text); 
+      } else {
+        console.log("❌ No text recognized or error:", data.error);
+        alert("Ahvi couldn't hear you clearly.");
+      }
+    } catch (error) {
+      console.error("Transcription error:", error);
+      alert("Failed to reach Ahvi's voice server.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const sendMessage = async (textOverride?: string) => {
     const textToSend = textOverride || inputText;
     if (!textToSend.trim()) return;
+
+    Speech.stop(); // Stop Ahvi if user interrupts
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -152,17 +234,12 @@ const ChatScreen = () => {
         let aiResponseText = data.message.content;
         let extractedIds: string | undefined = undefined;
 
-        // 1. Check if the AI wants to open a style board
         const boardMatch = aiResponseText.match(/\[?STYLE_BOARD:\s*(.*?)(?:\]|\n|$)/i);
         
         if (boardMatch) {
-            // 2. Extract the raw IDs
             extractedIds = boardMatch[1].trim();
-            
-            // 3. Remove the tag from the text the user sees
             aiResponseText = aiResponseText.replace(/\[?STYLE_BOARD:.*?(\]|\n|$)/gi, '').trim();
             
-            // 4. Redirect immediately
             router.push({
                 pathname: '/style-board',
                 params: { ids: extractedIds }
@@ -173,9 +250,15 @@ const ChatScreen = () => {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
           content: aiResponseText,
-          boardIds: extractedIds // <-- SAVE the IDs in the message state
+          boardIds: extractedIds 
         };
         setMessages((prev) => [...prev, assistantMessage]);
+
+        // Speak the response out loud
+        Speech.speak(aiResponseText, {
+            pitch: 1.1, // Friendly pitch
+            rate: 0.95, // Slightly slower for clarity
+        });
 
         if (data.chips && data.chips.length > 0) {
             setActiveChips(data.chips);
@@ -232,7 +315,6 @@ const ChatScreen = () => {
             </Text>
         ) : null}
         
-        {/* NEW: Render a button to view the style board if IDs exist */}
         {item.boardIds && (
           <TouchableOpacity 
             style={{

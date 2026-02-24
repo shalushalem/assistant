@@ -107,8 +107,16 @@ const StyleBoardScreen = () => {
     }, 400); 
   };
 
+  // --- UPDATED: Navigate to the new Save Style Card screen ---
   const handleSaveBoard = () => {
-    alert("Style Board Saved!");
+    // Grab the IDs of the CURRENT items on the board (accounting for shuffles)
+    const currentIds = items.map(item => item.$id).join(',');
+    
+    // Push to the new screen and pass the IDs
+    router.push({
+      pathname: '/save-style-card', // Ensure this matches your new file's name
+      params: { ids: currentIds }
+    });
   };
 
   // --- NEW: Smart Column Distributor ---

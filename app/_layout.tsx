@@ -9,6 +9,9 @@ const RootLayout = () => {
         <Stack.Screen name="(auth)" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="profile-setup" options={{ headerShown: false }} />
+        {/* ADD THESE TWO LINES FOR YOUR NEW SCREENS */}
+        <Stack.Screen name="style-board" options={{ headerShown: false }} />
+        <Stack.Screen name="save-style-card" options={{ headerShown: false }} />
       </Stack>
     </GlobalProvider>
   );
