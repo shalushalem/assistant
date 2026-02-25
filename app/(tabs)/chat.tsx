@@ -9,7 +9,7 @@ import { useGlobalContext } from '../../context/GlobalProvider';
 import { ID, Query } from 'react-native-appwrite';
 import { Audio } from 'expo-av'; 
 import * as Speech from 'expo-speech'; 
-import * as FileSystem from 'expo-file-system/legacy'; // <-- EXPO SDK 54 FIX IS RIGHT HERE!
+import * as FileSystem from 'expo-file-system/legacy';
 
 interface Message {
   id: string;
@@ -36,7 +36,7 @@ const ChatScreen = () => {
   const [isRecording, setIsRecording] = useState(false);
 
   // Update with your local server IP
-  const SERVER_IP = 'http://192.168.29.193:8000';
+  const SERVER_IP = 'http://10.60.197.103:8000';
   const OLLAMA_ENDPOINT = `${SERVER_IP}/api/text`;
   const TRANSCRIBE_ENDPOINT = `${SERVER_IP}/api/transcribe`;
 
@@ -86,13 +86,9 @@ const ChatScreen = () => {
 
   const startRecording = async () => {
     try {
-      // 1. SAFETY LOCK: Prevent double-tapping the mic
-      if (recording) {
-        console.log("Already recording, ignoring tap.");
-        return; 
-      }
+      if (recording) return; 
 
-      Speech.stop(); // Stop Ahvi if she is currently talking
+      Speech.stop(); 
       await Audio.requestPermissionsAsync();
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
@@ -124,10 +120,8 @@ const ChatScreen = () => {
         allowsRecordingIOS: false,
       });
       
-      // 2. SAFETY UNLOCK: Clear the recording from state immediately
       setRecording(null); 
 
-      // If we got a file, send it to the backend to be transcribed!
       if (uri) {
           transcribeAudio(uri);
       }
@@ -137,7 +131,6 @@ const ChatScreen = () => {
     }
   };
 
-  // --- Send audio to Python backend ---
   const transcribeAudio = async (uri: string) => {
     setIsLoading(true);
     try {
@@ -145,7 +138,6 @@ const ChatScreen = () => {
       let data;
 
       if (Platform.OS === 'web') {
-        // --- WEB BROWSER UPLOAD METHOD ---
         const localResponse = await fetch(uri);
         const audioBlob = await localResponse.blob();
         
@@ -161,22 +153,19 @@ const ChatScreen = () => {
         data = await serverResponse.json();
 
       } else {
-        // --- NATIVE PHONE (Android/iOS) UPLOAD METHOD ---
         const response = await FileSystem.uploadAsync(TRANSCRIBE_ENDPOINT, uri, {
           fieldName: 'file',
           httpMethod: 'POST',
-          uploadType: 1, // '1' is the raw numerical value for MULTIPART
+          uploadType: 1, 
           mimeType: 'audio/m4a', 
         });
         data = JSON.parse(response.body);
       }
       
-      // Handle the response from Python
       if (data.text) {
         console.log("✅ Ahvi heard:", data.text);
         sendMessage(data.text); 
       } else {
-        console.log("❌ No text recognized or error:", data.error);
         alert("Ahvi couldn't hear you clearly.");
       }
     } catch (error) {
@@ -191,7 +180,7 @@ const ChatScreen = () => {
     const textToSend = textOverride || inputText;
     if (!textToSend.trim()) return;
 
-    Speech.stop(); // Stop Ahvi if user interrupts
+    Speech.stop(); 
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -254,11 +243,34 @@ const ChatScreen = () => {
         };
         setMessages((prev) => [...prev, assistantMessage]);
 
-        // Speak the response out loud
-        Speech.speak(aiResponseText, {
-            pitch: 1.1, // Friendly pitch
-            rate: 0.95, // Slightly slower for clarity
-        });
+        // ---------------------------------------------------------
+        // 🎙️ PLAY YOUR CUSTOM CLONED VOICE
+        // ---------------------------------------------------------
+        if (data.audio_base64) {
+            try {
+                // XTTS generates .wav files, so we specify audio/wav here
+                const uri = `data:audio/wav;base64,${data.audio_base64}`;
+                
+                // Initialize audio playback for iOS/Android
+                await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
+                const { sound } = await Audio.Sound.createAsync({ uri });
+                
+                await sound.playAsync();
+                
+                // Unload the file to free up memory when finished
+                sound.setOnPlaybackStatusUpdate((status) => {
+                    if (status.isLoaded && status.didJustFinish) {
+                        sound.unloadAsync();
+                    }
+                });
+            } catch (audioError) {
+                console.error("❌ Failed to play cloned voice:", audioError);
+            }
+        } else {
+            // Fallback just in case the server fails to clone the voice
+            console.log("⚠️ No base64 audio received, falling back to robot voice.");
+            Speech.speak(aiResponseText);
+        }
 
         if (data.chips && data.chips.length > 0) {
             setActiveChips(data.chips);
