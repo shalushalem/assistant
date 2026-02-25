@@ -2,30 +2,15 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Image,
-  Modal,
-  Platform,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
-} from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Image, Modal, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Models, Query } from 'react-native-appwrite';
+import { Models, Query, ID } from 'react-native-appwrite';
 import * as FileSystem from 'expo-file-system'; 
 
 import { useGlobalContext } from '../../context/GlobalProvider';
-import { appwriteConfig, databases, storage } from '../../lib/appwrite';
+import { appwriteConfig, databases, uploadFile } from '../../lib/appwrite'; // Added uploadFile
 
-const { databaseId, outfitCollectionId, storageId, endpoint, projectId } = appwriteConfig;
-
+const { databaseId, outfitCollectionId } = appwriteConfig;
 const AI_ANALYZE_ENDPOINT = 'http://192.168.29.193:8000/api/analyze-image';
 
 type OutfitItem = Models.Document & {
@@ -34,14 +19,11 @@ type OutfitItem = Models.Document & {
   tags: string[]; 
   image_url: string;
   user_id: string;
-  image_id: string;
-  status: string;
 };
 
 const CATEGORIES = ['All', 'Tops', 'Bottoms', 'Footwear', 'Outerwear', 'Accessories', 'Dresses'];
 
 export default function Wardrobe() {
-  const router = useRouter();
   const { user } = useGlobalContext();
   
   const [items, setItems] = useState<OutfitItem[]>([]);
@@ -62,8 +44,8 @@ export default function Wardrobe() {
     try {
       if (!user?.$id) return;
       const response = await databases.listDocuments(
-        databaseId,
-        outfitCollectionId, 
+        databaseId!,
+        outfitCollectionId!, 
         [Query.equal('user_id', user.$id), Query.orderDesc('$createdAt')]
       );
       setItems(response.documents as OutfitItem[]);
@@ -138,26 +120,20 @@ export default function Wardrobe() {
     }
   };
 
-  // --- UPDATED DELETE FUNCTION ---
-  const handleDeleteItem = async (docId: string, imageId: string) => {
+  const handleDeleteItem = async (docId: string) => {
     Alert.alert("Delete Item", "Are you sure you want to remove this item?", [
       { text: "Cancel", style: "cancel" },
       { 
         text: "Delete", 
         style: "destructive", 
         onPress: async () => {
-          // 1. Optimistic UI Update: Instantly remove it from the screen
           setItems((prevItems) => prevItems.filter(item => item.$id !== docId));
-
           try {
-            // 2. Delete from database
-            await databases.deleteDocument(databaseId, outfitCollectionId, docId);
-            // 3. Delete from storage
-            if (imageId) await storage.deleteFile(storageId, imageId);
+            await databases.deleteDocument(databaseId!, outfitCollectionId!, docId);
+            // Note: Currently no direct way to delete from Cloudflare R2 client-side
           } catch (error: any) {
             console.error("Delete Error: ", error);
-            Alert.alert("Error", error.message || "Could not delete item.");
-            // If it fails, refresh the list to bring the item back
+            Alert.alert("Error", "Could not delete item.");
             fetchItems(); 
           }
         }
@@ -176,34 +152,28 @@ export default function Wardrobe() {
       const tagsArray = newItemTags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0);
 
       for (const imageAsset of newItemImages) {
-        let filePayload;
-        if (Platform.OS === 'web') {
-          const response = await fetch(imageAsset.uri);
-          const blob = await response.blob();
-          filePayload = new File([blob], imageAsset.fileName || `photo-${Date.now()}.jpg`, { type: imageAsset.mimeType || 'image/jpeg' });
-        } else {
-          filePayload = {
-            name: imageAsset.fileName || `photo-${Date.now()}.jpg`,
-            type: imageAsset.mimeType || 'image/jpeg',
-            size: imageAsset.fileSize || 0,
-            uri: imageAsset.uri,
-          };
-        }
+        // 1. Upload original user image -> to RAW Bucket
+        const rawImageUrl = await uploadFile(imageAsset.uri, 'image', 'raw');
+        console.log("Raw upload success: ", rawImageUrl);
 
-        const uploadedFile = await storage.createFile(storageId, 'unique()', filePayload as any);
-        const fileUrl = `${endpoint}/storage/buckets/${storageId}/files/${uploadedFile.$id}/view?project=${projectId}`;
+        // --- At this point, you could pass the rawImageUrl to your background removal API ---
+        // const processedImageUri = await yourBackgroundRemovalFunction(rawImageUrl);
+        // But for now, we will assume the imageAsset.uri is the final processed image
 
+        // 2. Upload processed image -> to WARDROBE Bucket
+        const wardrobeImageUrl = await uploadFile(imageAsset.uri, 'image', 'wardrobe');
+
+        // 3. Save details to Appwrite Database
         await databases.createDocument(
-          databaseId,
-          outfitCollectionId, 
-          'unique()',
+          databaseId!,
+          outfitCollectionId!, 
+          ID.unique(),
           {
             name: newItemName,
             category: newItemCategory,
             tags: tagsArray, 
-            image_url: fileUrl,  
+            image_url: wardrobeImageUrl,  // Use the R2 Wardrobe URL
             user_id: user?.$id,
-            image_id: uploadedFile.$id,
             status: 'ready',
           }
         );
@@ -230,7 +200,7 @@ export default function Wardrobe() {
       <Image source={{ uri: item.image_url }} style={styles.itemImage} resizeMode="cover" />
       <TouchableOpacity 
         style={styles.deleteButton}
-        onPress={() => handleDeleteItem(item.$id, item.image_id)}
+        onPress={() => handleDeleteItem(item.$id)}
         activeOpacity={0.6}
         hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }} 
       >
@@ -242,7 +212,7 @@ export default function Wardrobe() {
         
         {item.tags && item.tags.length > 0 && (
            <Text style={styles.itemTags} numberOfLines={1}>
-              #{item.tags.join(' #')}
+             #{item.tags.join(' #')}
            </Text>
         )}
       </View>
@@ -288,6 +258,7 @@ export default function Wardrobe() {
         />
       )}
 
+      {/* MODAL CODE REMAINS EXACTLY THE SAME */}
       <Modal visible={isModalVisible} animationType="slide" presentationStyle="pageSheet">
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
@@ -330,51 +301,23 @@ export default function Wardrobe() {
             )}
 
             <Text style={styles.label}>Name</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g. Black Cotton Shirt"
-              value={newItemName}
-              onChangeText={setNewItemName}
-              placeholderTextColor="#7B7B8B"
-              editable={!analyzingImage}
-            />
+            <TextInput style={styles.input} placeholder="e.g. Black Cotton Shirt" value={newItemName} onChangeText={setNewItemName} placeholderTextColor="#7B7B8B" editable={!analyzingImage} />
 
             <Text style={styles.label}>Tags (Comma separated)</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g. shirt, casual, cotton"
-              value={newItemTags}
-              onChangeText={setNewItemTags}
-              placeholderTextColor="#7B7B8B"
-              editable={!analyzingImage}
-            />
+            <TextInput style={styles.input} placeholder="e.g. shirt, casual, cotton" value={newItemTags} onChangeText={setNewItemTags} placeholderTextColor="#7B7B8B" editable={!analyzingImage} />
 
             <Text style={styles.label}>Category</Text>
             <View style={styles.categorySelect}>
                {CATEGORIES.slice(1).map(cat => (
-                 <TouchableOpacity 
-                    key={cat} 
-                    style={[styles.catOption, newItemCategory === cat && styles.catOptionActive]}
-                    onPress={() => setNewItemCategory(cat)}
-                    disabled={analyzingImage}
-                 >
+                 <TouchableOpacity key={cat} style={[styles.catOption, newItemCategory === cat && styles.catOptionActive]} onPress={() => setNewItemCategory(cat)} disabled={analyzingImage}>
                     <Text style={[styles.catOptionText, newItemCategory === cat && styles.catOptionTextActive]}>{cat}</Text>
                  </TouchableOpacity>
                ))}
             </View>
 
-            <TouchableOpacity 
-              style={[styles.uploadBtn, (uploading || analyzingImage) && styles.disabledBtn]} 
-              onPress={handleAddItem}
-              disabled={uploading || analyzingImage}
-            >
-              {uploading ? (
-                <ActivityIndicator color="#161622" />
-              ) : (
-                <Text style={styles.uploadBtnText}>Save Item</Text>
-              )}
+            <TouchableOpacity style={[styles.uploadBtn, (uploading || analyzingImage) && styles.disabledBtn]} onPress={handleAddItem} disabled={uploading || analyzingImage}>
+              {uploading ? <ActivityIndicator color="#161622" /> : <Text style={styles.uploadBtnText}>Save Item</Text>}
             </TouchableOpacity>
-
           </ScrollView>
         </View>
       </Modal>
@@ -396,10 +339,7 @@ const styles = StyleSheet.create({
   columnWrapper: { justifyContent: 'space-between' },
   itemCard: { width: '48%', backgroundColor: '#1E1E2D', borderRadius: 15, marginBottom: 15, borderWidth: 1, borderColor: '#232533', position: 'relative' },
   itemImage: { width: '100%', height: 180, backgroundColor: '#232533', borderTopLeftRadius: 15, borderTopRightRadius: 15 },
-  
-  // --- UPDATED Z-INDEX TO FIX CLICKABILITY ---
   deleteButton: { position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.6)', padding: 8, borderRadius: 20, zIndex: 999, elevation: 10 },
-  
   itemInfo: { padding: 10 },
   itemName: { fontSize: 16, fontWeight: '600', marginBottom: 4, color: 'white' },
   itemCategory: { fontSize: 12, color: '#CDCDE0' },

@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, Image, TouchableOpacity, ActivityIndicator, StyleSheet, TextInput, ScrollView } from 'react-native'; // <-- ScrollView added here!
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, Image, TouchableOpacity, ActivityIndicator, StyleSheet, TextInput, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { databases, appwriteConfig } from '../lib/appwrite';
+import { databases, appwriteConfig, uploadFile } from '../lib/appwrite';
 import { useGlobalContext } from '../context/GlobalProvider';
-import { Query } from 'react-native-appwrite';
+import { Query, ID } from 'react-native-appwrite';
+import { captureRef } from 'react-native-view-shot';
 
-// Helper to categorize items
 const getCategoryType = (category = '') => {
   const cat = category.toLowerCase();
   const tops = ['top', 'shirt', 't-shirt', 'blouse', 'sweater', 'hoodie', 'jacket', 'outer', 'dress'];
@@ -35,6 +35,9 @@ const SaveStyleCardScreen = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [outfitName, setOutfitName] = useState("My Style Board");
   const [isSaving, setIsSaving] = useState(false);
+  
+  // Reference for capturing the collage image
+  const viewRef = useRef<View>(null);
 
   useEffect(() => {
     fetchItemsAndName();
@@ -58,7 +61,6 @@ const SaveStyleCardScreen = () => {
 
       const itemNames = selectedItems.map(i => i.name);
       
-      // ⚠️ IMPORTANT: UPDATE THE IP ADDRESS BELOW ⚠️
       const nameRes = await fetch('http://192.168.29.193:8000/api/name-outfit', { 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -77,13 +79,36 @@ const SaveStyleCardScreen = () => {
   const handleConfirmSave = async () => {
     setIsSaving(true);
     try {
-      alert('Ready to save to database! (Appwrite connection pending)');
-      setTimeout(() => {
-        router.back();
-      }, 1000);
+      // 1. Capture the collage view as an image
+      const localUri = await captureRef(viewRef, {
+        format: 'jpg',
+        quality: 0.8,
+      });
+
+      // 2. Upload the captured style board to the 'styleboard' bucket in R2
+      const styleBoardUrl = await uploadFile(localUri, 'image', 'styleboard');
+
+      // 3. Save to Appwrite Database (saved_boards collection)
+      if (styleBoardUrl) {
+          await databases.createDocument(
+            appwriteConfig.databaseId!,
+            appwriteConfig.savedBoardsCollectionId!,
+            ID.unique(),
+            {
+              name: outfitName,
+              image_url: styleBoardUrl,
+              user_id: user.$id,
+              // Store the individual item IDs so you know what's in the outfit
+              item_ids: (ids as string).split(',').map(id => id.trim()) 
+            }
+          );
+          
+          Alert.alert("Success", "Style Board saved successfully!");
+          router.back();
+      }
     } catch (error) {
-      console.log(error);
-      alert('Failed to save');
+      console.error("Error saving style card: ", error);
+      Alert.alert('Error', 'Failed to save style board');
     } finally {
       setIsSaving(false);
     }
@@ -118,7 +143,8 @@ const SaveStyleCardScreen = () => {
             placeholderTextColor="#CDCDE0"
           />
 
-          <View style={styles.collageBoard}>
+          {/* Wrapping the collage in the viewRef so we can capture it */}
+          <View ref={viewRef} style={styles.collageBoard}>
             <View style={styles.leftCol}>
               {topItem && (
                 <Image source={{ uri: topItem.image_url }} style={styles.collageMainPiece} resizeMode="contain" />
@@ -169,7 +195,6 @@ const styles = StyleSheet.create({
   collageBoard: {
     width: '100%', height: 450, backgroundColor: '#D9DBE0', 
     borderRadius: 20, flexDirection: 'row', padding: 15,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 5,
   },
   leftCol: { flex: 6, alignItems: 'center', justifyContent: 'center' },
   rightCol: { flex: 4, alignItems: 'center', justifyContent: 'space-around', paddingLeft: 10 },

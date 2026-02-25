@@ -36,7 +36,7 @@ const ChatScreen = () => {
   const [isRecording, setIsRecording] = useState(false);
 
   // Update with your local server IP
-  const SERVER_IP = 'http://10.60.197.103:8000';
+  const SERVER_IP = 'http://192.168.29.193:8000';
   const OLLAMA_ENDPOINT = `${SERVER_IP}/api/text`;
   const TRANSCRIBE_ENDPOINT = `${SERVER_IP}/api/transcribe`;
 

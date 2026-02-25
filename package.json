@@ -9,6 +9,7 @@
     "web": "expo start --web"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.997.0",
     "@expo/vector-icons": "^15.0.3",
     "expo": "~54.0.33",
     "expo-auth-session": "^7.0.10",
@@ -29,7 +30,8 @@
     "react-native-screens": "~4.16.0",
     "react-native-url-polyfill": "^3.0.0",
     "react-native-view-shot": "4.0.3",
-    "react-native-web": "^0.21.0"
+    "react-native-web": "^0.21.0",
+    "web-streams-polyfill": "^4.2.0"
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
