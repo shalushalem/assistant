@@ -1,14 +1,26 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Image, Modal, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Image,
+  Modal,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Models, Query, ID } from 'react-native-appwrite';
-import * as FileSystem from 'expo-file-system'; 
+import * as FileSystem from 'expo-file-system';
 
 import { useGlobalContext } from '../../context/GlobalProvider';
-import { appwriteConfig, databases, uploadFile } from '../../lib/appwrite'; // Added uploadFile
+import { appwriteConfig, databases, uploadFile, deleteFileFromR2 } from '../../lib/appwrite';
 
 const { databaseId, outfitCollectionId } = appwriteConfig;
 const AI_ANALYZE_ENDPOINT = 'http://192.168.29.193:8000/api/analyze-image';
@@ -16,26 +28,30 @@ const AI_ANALYZE_ENDPOINT = 'http://192.168.29.193:8000/api/analyze-image';
 type OutfitItem = Models.Document & {
   name: string;
   category: string;
-  tags: string[]; 
+  tags: string[];
   image_url: string;
   user_id: string;
+  status: string;
+  image_id: string;
+  masked_url?: string; // We will use this to store the 'raw' bucket URL
+  masked_id?: string;
 };
 
 const CATEGORIES = ['All', 'Tops', 'Bottoms', 'Footwear', 'Outerwear', 'Accessories', 'Dresses'];
 
 export default function Wardrobe() {
   const { user } = useGlobalContext();
-  
+
   const [items, setItems] = useState<OutfitItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('All');
-  
+
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [newItemName, setNewItemName] = useState('');
   const [newItemCategory, setNewItemCategory] = useState('Tops');
-  const [newItemTags, setNewItemTags] = useState(''); 
-  
+  const [newItemTags, setNewItemTags] = useState('');
+
   const [newItemImages, setNewItemImages] = useState<ImagePicker.ImagePickerAsset[]>([]);
   const [uploading, setUploading] = useState(false);
   const [analyzingImage, setAnalyzingImage] = useState(false);
@@ -45,7 +61,7 @@ export default function Wardrobe() {
       if (!user?.$id) return;
       const response = await databases.listDocuments(
         databaseId!,
-        outfitCollectionId!, 
+        outfitCollectionId!,
         [Query.equal('user_id', user.$id), Query.orderDesc('$createdAt')]
       );
       setItems(response.documents as OutfitItem[]);
@@ -57,18 +73,24 @@ export default function Wardrobe() {
     }
   };
 
-  useEffect(() => { fetchItems(); }, [user]);
-  const onRefresh = () => { setRefreshing(true); fetchItems(); };
+  useEffect(() => {
+    fetchItems();
+  }, [user]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchItems();
+  };
 
   const pickImage = async (useCamera = false) => {
     try {
       let result;
       const options: ImagePicker.ImagePickerOptions = {
         mediaTypes: ['images'],
-        allowsEditing: false, 
-        allowsMultipleSelection: !useCamera, 
-        quality: 0.5, 
-        base64: true, 
+        allowsEditing: false,
+        allowsMultipleSelection: !useCamera,
+        quality: 0.5,
+        base64: true,
       };
 
       if (useCamera) {
@@ -79,7 +101,7 @@ export default function Wardrobe() {
       }
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        setNewItemImages(result.assets); 
+        setNewItemImages(result.assets);
         analyzeImageWithAI(result.assets[0]);
       }
     } catch (error) {
@@ -92,14 +114,16 @@ export default function Wardrobe() {
     try {
       let base64Image = asset.base64;
       if (!base64Image && asset.uri) {
-         base64Image = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
+        base64Image = await FileSystem.readAsStringAsync(asset.uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
       }
       if (!base64Image) throw new Error("Could not get image data.");
 
       const response = await fetch(AI_ANALYZE_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_base64: base64Image })
+        body: JSON.stringify({ image_base64: base64Image }),
       });
 
       const data = await response.json();
@@ -110,7 +134,7 @@ export default function Wardrobe() {
           setNewItemCategory(data.category);
         }
         if (data.tags && Array.isArray(data.tags)) {
-           setNewItemTags(data.tags.join(', '));
+          setNewItemTags(data.tags.join(', '));
         }
       }
     } catch (error) {
@@ -120,24 +144,37 @@ export default function Wardrobe() {
     }
   };
 
-  const handleDeleteItem = async (docId: string) => {
+  const handleDeleteItem = async (item: OutfitItem) => {
     Alert.alert("Delete Item", "Are you sure you want to remove this item?", [
       { text: "Cancel", style: "cancel" },
-      { 
-        text: "Delete", 
-        style: "destructive", 
+      {
+        text: "Delete",
+        style: "destructive",
         onPress: async () => {
-          setItems((prevItems) => prevItems.filter(item => item.$id !== docId));
+          // 1. Optimistically hide it from the screen immediately
+          setItems((prevItems) => prevItems.filter((i) => i.$id !== item.$id));
+          
           try {
-            await databases.deleteDocument(databaseId!, outfitCollectionId!, docId);
-            // Note: Currently no direct way to delete from Cloudflare R2 client-side
+            // 2. Delete the record from Appwrite Database
+            await databases.deleteDocument(databaseId!, outfitCollectionId!, item.$id);
+            
+            // 3. Delete the processed image from Cloudflare R2 ('wardrobe' bucket)
+            if (item.image_url) {
+              await deleteFileFromR2(item.image_url, 'wardrobe');
+            }
+
+            // 4. Delete the original image from Cloudflare R2 ('raw' bucket)
+            if (item.masked_url) {
+              await deleteFileFromR2(item.masked_url, 'raw');
+            }
+
           } catch (error: any) {
             console.error("Delete Error: ", error);
-            Alert.alert("Error", "Could not delete item.");
-            fetchItems(); 
+            Alert.alert("Error", "Could not fully delete the item.");
+            fetchItems(); // Refresh items to sync state back with reality
           }
-        }
-      }
+        },
+      },
     ]);
   };
 
@@ -149,32 +186,37 @@ export default function Wardrobe() {
 
     setUploading(true);
     try {
-      const tagsArray = newItemTags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0);
+      // Ensure tags match your schema (String Array)
+      const tagsArray = newItemTags
+        ? newItemTags.split(',').map((tag) => tag.trim()).filter((tag) => tag.length > 0)
+        : [];
 
       for (const imageAsset of newItemImages) {
+        const uniqueId = ID.unique();
+
         // 1. Upload original user image -> to RAW Bucket
         const rawImageUrl = await uploadFile(imageAsset.uri, 'image', 'raw');
-        console.log("Raw upload success: ", rawImageUrl);
-
-        // --- At this point, you could pass the rawImageUrl to your background removal API ---
-        // const processedImageUri = await yourBackgroundRemovalFunction(rawImageUrl);
-        // But for now, we will assume the imageAsset.uri is the final processed image
 
         // 2. Upload processed image -> to WARDROBE Bucket
         const wardrobeImageUrl = await uploadFile(imageAsset.uri, 'image', 'wardrobe');
 
+        if (!wardrobeImageUrl || !rawImageUrl) throw new Error("Failed to upload images to R2.");
+
         // 3. Save details to Appwrite Database
         await databases.createDocument(
           databaseId!,
-          outfitCollectionId!, 
-          ID.unique(),
+          outfitCollectionId!,
+          uniqueId,
           {
-            name: newItemName,
-            category: newItemCategory,
-            tags: tagsArray, 
-            image_url: wardrobeImageUrl,  // Use the R2 Wardrobe URL
-            user_id: user?.$id,
-            status: 'ready',
+            name: newItemName,           
+            category: newItemCategory,   
+            tags: tagsArray,             
+            image_url: wardrobeImageUrl, // Saves the wardrobe bucket URL
+            user_id: user?.$id,          
+            status: 'ready',             
+            image_id: uniqueId,          
+            masked_url: rawImageUrl,     // IMPORTANT: Saves the raw bucket URL so we can delete it later
+            masked_id: null              
           }
         );
       }
@@ -185,8 +227,8 @@ export default function Wardrobe() {
       setNewItemName('');
       setNewItemTags('');
       fetchItems();
-
     } catch (error: any) {
+      console.error("Upload/Database Error: ", error);
       Alert.alert('Upload Failed', error.message || 'Something went wrong.');
     } finally {
       setUploading(false);
@@ -198,22 +240,22 @@ export default function Wardrobe() {
   const renderItem = ({ item }: { item: OutfitItem }) => (
     <View style={styles.itemCard}>
       <Image source={{ uri: item.image_url }} style={styles.itemImage} resizeMode="cover" />
-      <TouchableOpacity 
+      <TouchableOpacity
         style={styles.deleteButton}
-        onPress={() => handleDeleteItem(item.$id)}
+        onPress={() => handleDeleteItem(item)} // Pass the full 'item'
         activeOpacity={0.6}
-        hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }} 
+        hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
       >
         <Ionicons name="trash" size={20} color="#FF4B4B" />
       </TouchableOpacity>
       <View style={styles.itemInfo}>
         <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
         <Text style={styles.itemCategory}>{item.category}</Text>
-        
+
         {item.tags && item.tags.length > 0 && (
-           <Text style={styles.itemTags} numberOfLines={1}>
-             #{item.tags.join(' #')}
-           </Text>
+          <Text style={styles.itemTags} numberOfLines={1}>
+            #{item.tags.join(' #')}
+          </Text>
         )}
       </View>
     </View>
@@ -231,7 +273,11 @@ export default function Wardrobe() {
       <View style={styles.categoryContainer}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryList}>
           {CATEGORIES.map((cat) => (
-            <TouchableOpacity key={cat} style={[styles.categoryChip, selectedCategory === cat && styles.categoryChipActive]} onPress={() => setSelectedCategory(cat)}>
+            <TouchableOpacity
+              key={cat}
+              style={[styles.categoryChip, selectedCategory === cat && styles.categoryChipActive]}
+              onPress={() => setSelectedCategory(cat)}
+            >
               <Text style={[styles.categoryText, selectedCategory === cat && styles.categoryTextActive]}>{cat}</Text>
             </TouchableOpacity>
           ))}
@@ -258,7 +304,6 @@ export default function Wardrobe() {
         />
       )}
 
-      {/* MODAL CODE REMAINS EXACTLY THE SAME */}
       <Modal visible={isModalVisible} animationType="slide" presentationStyle="pageSheet">
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
@@ -267,7 +312,7 @@ export default function Wardrobe() {
               <Ionicons name="close" size={28} color="#CDCDE0" />
             </TouchableOpacity>
           </View>
-          
+
           <ScrollView contentContainerStyle={styles.modalContent}>
             <View style={styles.imagePickerContainer}>
               {newItemImages.length > 0 ? (
@@ -282,14 +327,14 @@ export default function Wardrobe() {
                 </View>
               )}
               <View style={styles.imageButtons}>
-                 <TouchableOpacity style={styles.imageBtn} onPress={() => pickImage(true)}>
-                    <Ionicons name="camera" size={20} color="#161622" />
-                    <Text style={styles.imageBtnText}>Camera</Text>
-                 </TouchableOpacity>
-                 <TouchableOpacity style={styles.imageBtn} onPress={() => pickImage(false)}>
-                    <Ionicons name="images" size={20} color="#161622" />
-                    <Text style={styles.imageBtnText}>Gallery</Text>
-                 </TouchableOpacity>
+                <TouchableOpacity style={styles.imageBtn} onPress={() => pickImage(true)}>
+                  <Ionicons name="camera" size={20} color="#161622" />
+                  <Text style={styles.imageBtnText}>Camera</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.imageBtn} onPress={() => pickImage(false)}>
+                  <Ionicons name="images" size={20} color="#161622" />
+                  <Text style={styles.imageBtnText}>Gallery</Text>
+                </TouchableOpacity>
               </View>
             </View>
 
@@ -301,21 +346,44 @@ export default function Wardrobe() {
             )}
 
             <Text style={styles.label}>Name</Text>
-            <TextInput style={styles.input} placeholder="e.g. Black Cotton Shirt" value={newItemName} onChangeText={setNewItemName} placeholderTextColor="#7B7B8B" editable={!analyzingImage} />
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. Black Cotton Shirt"
+              value={newItemName}
+              onChangeText={setNewItemName}
+              placeholderTextColor="#7B7B8B"
+              editable={!analyzingImage}
+            />
 
             <Text style={styles.label}>Tags (Comma separated)</Text>
-            <TextInput style={styles.input} placeholder="e.g. shirt, casual, cotton" value={newItemTags} onChangeText={setNewItemTags} placeholderTextColor="#7B7B8B" editable={!analyzingImage} />
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. shirt, casual, cotton"
+              value={newItemTags}
+              onChangeText={setNewItemTags}
+              placeholderTextColor="#7B7B8B"
+              editable={!analyzingImage}
+            />
 
             <Text style={styles.label}>Category</Text>
             <View style={styles.categorySelect}>
-               {CATEGORIES.slice(1).map(cat => (
-                 <TouchableOpacity key={cat} style={[styles.catOption, newItemCategory === cat && styles.catOptionActive]} onPress={() => setNewItemCategory(cat)} disabled={analyzingImage}>
-                    <Text style={[styles.catOptionText, newItemCategory === cat && styles.catOptionTextActive]}>{cat}</Text>
-                 </TouchableOpacity>
-               ))}
+              {CATEGORIES.slice(1).map(cat => (
+                <TouchableOpacity
+                  key={cat}
+                  style={[styles.catOption, newItemCategory === cat && styles.catOptionActive]}
+                  onPress={() => setNewItemCategory(cat)}
+                  disabled={analyzingImage}
+                >
+                  <Text style={[styles.catOptionText, newItemCategory === cat && styles.catOptionTextActive]}>{cat}</Text>
+                </TouchableOpacity>
+              ))}
             </View>
 
-            <TouchableOpacity style={[styles.uploadBtn, (uploading || analyzingImage) && styles.disabledBtn]} onPress={handleAddItem} disabled={uploading || analyzingImage}>
+            <TouchableOpacity
+              style={[styles.uploadBtn, (uploading || analyzingImage) && styles.disabledBtn]}
+              onPress={handleAddItem}
+              disabled={uploading || analyzingImage}
+            >
               {uploading ? <ActivityIndicator color="#161622" /> : <Text style={styles.uploadBtnText}>Save Item</Text>}
             </TouchableOpacity>
           </ScrollView>

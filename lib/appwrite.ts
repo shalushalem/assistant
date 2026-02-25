@@ -1,11 +1,11 @@
-// 1. IMPORT POLYFILL (Must be at the very top for Hermes/React Native compatibility)
+// 1. IMPORT POLYFILL (Must be at the very top)
 import 'web-streams-polyfill'; 
 
 import { Client, Account, ID, Databases, Avatars } from 'react-native-appwrite';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 
 // ==========================================
-// 2. APPWRITE CONFIGURATION
+// 2. APPWRITE CONFIGURATION (STORAGE REMOVED)
 // ==========================================
 const appwriteConfig = {
     endpoint: process.env.EXPO_PUBLIC_APPWRITE_ENDPOINT,
@@ -14,7 +14,6 @@ const appwriteConfig = {
     userCollectionId: process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_USERS,
     outfitCollectionId: process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_OUTFITS,
     memoryCollectionId: process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_MEMORIES,
-    storageId: process.env.EXPO_PUBLIC_APPWRITE_BUCKET_ID, 
     platform: process.env.EXPO_PUBLIC_APPWRITE_PACKAGE_NAME,
     savedBoardsCollectionId: process.env.EXPO_PUBLIC_APPWRITE_COLLECTION_SAVED_BOARDS,
 };
@@ -70,14 +69,13 @@ const r2Client = new S3Client({
         accessKeyId: r2Config.accessKeyId!,
         secretAccessKey: r2Config.secretAccessKey!,
     },
-    // FIX: Required for Cloudflare R2 to format URLs correctly
     forcePathStyle: true, 
 });
 
 export type UploadDestination = 'raw' | 'wardrobe' | 'styleboard' | 'tryon';
 
 // ==========================================
-// 6. UPLOAD HELPER FUNCTION (WEB & MOBILE COMPATIBLE)
+// 6. UPLOAD HELPER FUNCTION (R2 ONLY)
 // ==========================================
 export const uploadFile = async (
     fileUri: string, 
@@ -87,11 +85,9 @@ export const uploadFile = async (
     if (!fileUri) return;
 
     try {
-        // Fetch the local file and get the blob
         const response = await fetch(fileUri);
         const blob = await response.blob();
         
-        // Convert Blob to ArrayBuffer to bypass Hermes stream issues
         const arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => resolve(reader.result as ArrayBuffer);
@@ -99,7 +95,6 @@ export const uploadFile = async (
             reader.readAsArrayBuffer(blob);
         });
 
-        // FIX: Safely determine file extension (Handle Web blob: URLs vs Mobile file URLs)
         let fileExtension = type === 'image' ? 'jpg' : 'mp4';
         if (!fileUri.startsWith('blob:') && fileUri.includes('.')) {
             fileExtension = fileUri.split('.').pop() || fileExtension;
@@ -107,14 +102,12 @@ export const uploadFile = async (
 
         const fileName = `${ID.unique()}.${fileExtension}`;
         const fileType = type === 'image' ? 'image/jpeg' : 'video/mp4';
-
         const targetBucket = r2Config.buckets[destination];
 
         if (!targetBucket.name || !targetBucket.url) {
-             throw new Error(`R2 Configuration for '${destination}' bucket is missing in .env`);
+             throw new Error(`R2 Configuration for '${destination}' bucket is missing`);
         }
 
-        // Use Uint8Array in the Body to avoid stream getReader() errors
         const command = new PutObjectCommand({
             Bucket: targetBucket.name,
             Key: fileName,
@@ -123,13 +116,42 @@ export const uploadFile = async (
         });
 
         await r2Client.send(command);
-
-        // Return the specific public URL for the chosen bucket
-        const fileUrl = `${targetBucket.url}/${fileName}`;
-        return fileUrl;
+        return `${targetBucket.url}/${fileName}`;
         
     } catch (error) {
         console.error(`R2 Upload Error (${destination}): `, error);
         throw new Error(error as string);
+    }
+};
+
+// ==========================================
+// 7. DELETE HELPER FUNCTION (R2 ONLY)
+// ==========================================
+export const deleteFileFromR2 = async (fileUrl: string, destination: UploadDestination) => {
+    if (!fileUrl) return;
+
+    try {
+        const targetBucket = r2Config.buckets[destination];
+        if (!targetBucket.name || !targetBucket.url) {
+            throw new Error(`R2 Configuration for '${destination}' bucket is missing`);
+        }
+
+        // Get the filename (e.g. "12345.jpg") from the URL
+        const fileName = fileUrl.split('/').pop();
+        if (!fileName) throw new Error("Could not extract filename from URL");
+
+        console.log(`Attempting to delete: ${fileName} from ${targetBucket.name}...`);
+
+        const command = new DeleteObjectCommand({
+            Bucket: targetBucket.name,
+            Key: fileName,
+        });
+
+        await r2Client.send(command);
+        console.log(`✅ Successfully deleted ${fileName} from R2!`);
+        return true;
+    } catch (error) {
+        console.error(`❌ R2 Delete Error (${destination}): `, error);
+        return false;
     }
 };
