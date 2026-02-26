@@ -61,6 +61,7 @@ const SaveStyleCardScreen = () => {
 
       const itemNames = selectedItems.map(i => i.name);
       
+      // Keep your exact local IP URL for the AI naming request
       const nameRes = await fetch('http://192.168.29.193:8000/api/name-outfit', { 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -77,34 +78,44 @@ const SaveStyleCardScreen = () => {
   };
 
   const handleConfirmSave = async () => {
+    if (!user?.$id) {
+      Alert.alert("Error", "You must be logged in to save an outfit.");
+      return;
+    }
+
     setIsSaving(true);
     try {
+      // 1. Capture the UI view to an image
       const localUri = await captureRef(viewRef, {
         format: 'jpg',
         quality: 0.8,
       });
 
+      // 2. Upload to Appwrite Storage Bucket
       const styleBoardUrl = await uploadFile(localUri, 'image', 'styleboard');
 
       if (styleBoardUrl) {
+          // 3. Save to Appwrite Database using EXACT schema keys
           await databases.createDocument(
             appwriteConfig.databaseId!,
             appwriteConfig.savedBoardsCollectionId!,
             ID.unique(),
             {
-              name: outfitName,
-              image_url: styleBoardUrl,
-              user_id: user.$id,
-              item_ids: (ids as string).split(',').map(id => id.trim()) 
+              userId: user.$id,                                          // Fixed: matched to schema
+              imageUrl: styleBoardUrl,                                   // Fixed: matched to schema
+              itemIds: (ids as string).split(',').map(id => id.trim()),  // Fixed: matched to schema
+              occasion: outfitName                                       // Fixed: mapped name to 'occasion'
             }
           );
           
           Alert.alert("Success", "Style Board saved successfully!");
           router.back();
+      } else {
+        throw new Error("Failed to get image upload URL");
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error saving style card: ", error);
-      Alert.alert('Error', 'Failed to save style board');
+      Alert.alert('Error', error.message || 'Failed to save style board');
     } finally {
       setIsSaving(false);
     }
