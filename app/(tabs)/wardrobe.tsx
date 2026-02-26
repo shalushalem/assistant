@@ -17,13 +17,15 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Models, Query, ID } from 'react-native-appwrite';
-import * as FileSystem from 'expo-file-system';
+// 🟢 FIX: Imported from the legacy path for Expo 54 compatibility
+import * as FileSystem from 'expo-file-system/legacy';
 
 import { useGlobalContext } from '../../context/GlobalProvider';
 import { appwriteConfig, databases, uploadFile, deleteFileFromR2 } from '../../lib/appwrite';
 
 const { databaseId, outfitCollectionId } = appwriteConfig;
 const AI_ANALYZE_ENDPOINT = 'http://192.168.29.193:8000/api/analyze-image';
+const BG_REMOVE_ENDPOINT = 'http://192.168.29.193:8000/api/remove-bg';
 
 type OutfitItem = Models.Document & {
   name: string;
@@ -33,7 +35,7 @@ type OutfitItem = Models.Document & {
   user_id: string;
   status: string;
   image_id: string;
-  masked_url?: string; // We will use this to store the 'raw' bucket URL
+  masked_url?: string; 
   masked_id?: string;
 };
 
@@ -90,7 +92,7 @@ export default function Wardrobe() {
         allowsEditing: false,
         allowsMultipleSelection: !useCamera,
         quality: 0.5,
-        base64: true,
+        base64: true, 
       };
 
       if (useCamera) {
@@ -110,12 +112,14 @@ export default function Wardrobe() {
   };
 
   const analyzeImageWithAI = async (asset: ImagePicker.ImagePickerAsset) => {
+    if (!asset) return; 
+    
     setAnalyzingImage(true);
     try {
       let base64Image = asset.base64;
       if (!base64Image && asset.uri) {
         base64Image = await FileSystem.readAsStringAsync(asset.uri, {
-          encoding: FileSystem.EncodingType.Base64,
+          encoding: 'base64', 
         });
       }
       if (!base64Image) throw new Error("Could not get image data.");
@@ -151,27 +155,23 @@ export default function Wardrobe() {
         text: "Delete",
         style: "destructive",
         onPress: async () => {
-          // 1. Optimistically hide it from the screen immediately
           setItems((prevItems) => prevItems.filter((i) => i.$id !== item.$id));
           
           try {
-            // 2. Delete the record from Appwrite Database
             await databases.deleteDocument(databaseId!, outfitCollectionId!, item.$id);
             
-            // 3. Delete the processed image from Cloudflare R2 ('wardrobe' bucket)
             if (item.image_url) {
-              await deleteFileFromR2(item.image_url, 'wardrobe');
+              await deleteFileFromR2(item.image_url, 'raw');
             }
 
-            // 4. Delete the original image from Cloudflare R2 ('raw' bucket)
             if (item.masked_url) {
-              await deleteFileFromR2(item.masked_url, 'raw');
+              await deleteFileFromR2(item.masked_url, 'wardrobe');
             }
 
           } catch (error: any) {
             console.error("Delete Error: ", error);
             Alert.alert("Error", "Could not fully delete the item.");
-            fetchItems(); // Refresh items to sync state back with reality
+            fetchItems();
           }
         },
       },
@@ -186,37 +186,64 @@ export default function Wardrobe() {
 
     setUploading(true);
     try {
-      // Ensure tags match your schema (String Array)
       const tagsArray = newItemTags
         ? newItemTags.split(',').map((tag) => tag.trim()).filter((tag) => tag.length > 0)
         : [];
 
       for (const imageAsset of newItemImages) {
+        if (!imageAsset) continue; 
+        
         const uniqueId = ID.unique();
 
-        // 1. Upload original user image -> to RAW Bucket
+        console.log("Uploading raw image to R2...");
         const rawImageUrl = await uploadFile(imageAsset.uri, 'image', 'raw');
 
-        // 2. Upload processed image -> to WARDROBE Bucket
-        const wardrobeImageUrl = await uploadFile(imageAsset.uri, 'image', 'wardrobe');
+        let base64Image = imageAsset.base64;
+        if (!base64Image && imageAsset.uri) {
+          base64Image = await FileSystem.readAsStringAsync(imageAsset.uri, {
+            encoding: 'base64',
+          });
+        }
+
+        if (!base64Image) throw new Error("Could not read image base64 data.");
+
+        console.log("Sending to server for BG removal...");
+        const bgResponse = await fetch(BG_REMOVE_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image_base64: base64Image }),
+        });
+        
+        const bgData = await bgResponse.json();
+        if (!bgData || !bgData.processed_image_base64) {
+            throw new Error(bgData?.error || "Failed to remove background.");
+        }
+
+        const processedUri = FileSystem.cacheDirectory + `processed_${uniqueId}.png`;
+        await FileSystem.writeAsStringAsync(processedUri, bgData.processed_image_base64, {
+          encoding: 'base64', 
+        });
+
+        console.log("Uploading clean sticker to R2...");
+        const wardrobeImageUrl = await uploadFile(processedUri, 'image', 'wardrobe');
 
         if (!wardrobeImageUrl || !rawImageUrl) throw new Error("Failed to upload images to R2.");
 
-        // 3. Save details to Appwrite Database
+        console.log("Saving records to Appwrite...");
         await databases.createDocument(
           databaseId!,
           outfitCollectionId!,
-          uniqueId,
+          uniqueId, 
           {
             name: newItemName,           
             category: newItemCategory,   
             tags: tagsArray,             
-            image_url: wardrobeImageUrl, // Saves the wardrobe bucket URL
+            image_url: rawImageUrl,       
+            image_id: uniqueId,           
+            masked_url: wardrobeImageUrl, 
+            masked_id: `${uniqueId}_processed`, 
             user_id: user?.$id,          
-            status: 'ready',             
-            image_id: uniqueId,          
-            masked_url: rawImageUrl,     // IMPORTANT: Saves the raw bucket URL so we can delete it later
-            masked_id: null              
+            status: 'ready'             
           }
         );
       }
@@ -239,10 +266,11 @@ export default function Wardrobe() {
 
   const renderItem = ({ item }: { item: OutfitItem }) => (
     <View style={styles.itemCard}>
-      <Image source={{ uri: item.image_url }} style={styles.itemImage} resizeMode="cover" />
+      <Image source={{ uri: item.masked_url || item.image_url }} style={styles.itemImage} resizeMode="contain" />
+      
       <TouchableOpacity
         style={styles.deleteButton}
-        onPress={() => handleDeleteItem(item)} // Pass the full 'item'
+        onPress={() => handleDeleteItem(item)}
         activeOpacity={0.6}
         hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
       >

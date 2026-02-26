@@ -25,6 +25,7 @@ interface WardrobeItem {
   name: string;
   category: string;
   image_url: string;
+  masked_url?: string; // 🟢 Added this so TypeScript knows about the sticker URL
 }
 
 const StyleBoardScreen = () => {
@@ -114,7 +115,7 @@ const StyleBoardScreen = () => {
     
     // Push to the new screen and pass the IDs
     router.push({
-      pathname: '/save-style-card', // Ensure this matches your new file's name
+      pathname: '/save-style-card', 
       params: { ids: currentIds }
     });
   };
@@ -177,7 +178,8 @@ const StyleBoardScreen = () => {
                 <View key={item.$id} style={styles.sideItem}>
                   <TouchableOpacity activeOpacity={0.8} onPress={() => toggleLock(item.$id)}>
                     <View style={[styles.sideFrame, lockedIds.includes(item.$id) && styles.lockedBorder]}>
-                      <Image source={{ uri: item.image_url }} style={styles.imageFull} resizeMode="cover" />
+                      {/* 🟢 FIX: Prioritize masked_url and use contain */}
+                      <Image source={{ uri: item.masked_url || item.image_url }} style={styles.imageFull} resizeMode="contain" />
                       {lockedIds.includes(item.$id) && (
                         <View style={styles.lockIconOverlay}>
                           <Ionicons name="lock-closed" size={12} color="#FFFFFF" />
@@ -195,7 +197,8 @@ const StyleBoardScreen = () => {
               <View style={styles.centerColumn}>
                 <TouchableOpacity activeOpacity={0.9} onPress={() => toggleLock(mainPiece.$id)} style={styles.centerFrameWrap}>
                   <View style={[styles.centerFrame, lockedIds.includes(mainPiece.$id) && styles.lockedBorderCenter]}>
-                    <Image source={{ uri: mainPiece.image_url }} style={styles.imageFull} resizeMode="cover" />
+                    {/* 🟢 FIX: Prioritize masked_url and use contain */}
+                    <Image source={{ uri: mainPiece.masked_url || mainPiece.image_url }} style={styles.imageFull} resizeMode="contain" />
                     {lockedIds.includes(mainPiece.$id) && (
                       <View style={styles.lockIconOverlayCenter}>
                         <Ionicons name="lock-closed" size={18} color="#FFFFFF" />
@@ -217,7 +220,8 @@ const StyleBoardScreen = () => {
                 <View key={item.$id} style={styles.sideItem}>
                   <TouchableOpacity activeOpacity={0.8} onPress={() => toggleLock(item.$id)}>
                     <View style={[styles.sideFrame, lockedIds.includes(item.$id) && styles.lockedBorder]}>
-                      <Image source={{ uri: item.image_url }} style={styles.imageFull} resizeMode="cover" />
+                      {/* 🟢 FIX: Prioritize masked_url and use contain */}
+                      <Image source={{ uri: item.masked_url || item.image_url }} style={styles.imageFull} resizeMode="contain" />
                       {lockedIds.includes(item.$id) && (
                         <View style={styles.lockIconOverlay}>
                           <Ionicons name="lock-closed" size={12} color="#FFFFFF" />

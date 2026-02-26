@@ -25,6 +25,7 @@ interface WardrobeItem {
   name: string;
   category: string;
   image_url: string;
+  masked_url?: string;
 }
 
 const SaveStyleCardScreen = () => {
@@ -36,7 +37,6 @@ const SaveStyleCardScreen = () => {
   const [outfitName, setOutfitName] = useState("My Style Board");
   const [isSaving, setIsSaving] = useState(false);
   
-  // Reference for capturing the collage image
   const viewRef = useRef<View>(null);
 
   useEffect(() => {
@@ -79,16 +79,13 @@ const SaveStyleCardScreen = () => {
   const handleConfirmSave = async () => {
     setIsSaving(true);
     try {
-      // 1. Capture the collage view as an image
       const localUri = await captureRef(viewRef, {
         format: 'jpg',
         quality: 0.8,
       });
 
-      // 2. Upload the captured style board to the 'styleboard' bucket in R2
       const styleBoardUrl = await uploadFile(localUri, 'image', 'styleboard');
 
-      // 3. Save to Appwrite Database (saved_boards collection)
       if (styleBoardUrl) {
           await databases.createDocument(
             appwriteConfig.databaseId!,
@@ -98,7 +95,6 @@ const SaveStyleCardScreen = () => {
               name: outfitName,
               image_url: styleBoardUrl,
               user_id: user.$id,
-              // Store the individual item IDs so you know what's in the outfit
               item_ids: (ids as string).split(',').map(id => id.trim()) 
             }
           );
@@ -143,23 +139,22 @@ const SaveStyleCardScreen = () => {
             placeholderTextColor="#CDCDE0"
           />
 
-          {/* Wrapping the collage in the viewRef so we can capture it */}
           <View ref={viewRef} style={styles.collageBoard}>
             <View style={styles.leftCol}>
               {topItem && (
-                <Image source={{ uri: topItem.image_url }} style={styles.collageMainPiece} resizeMode="contain" />
+                <Image source={{ uri: topItem.masked_url || topItem.image_url }} style={styles.collageMainPiece} resizeMode="contain" />
               )}
               {bottomItem && (
-                <Image source={{ uri: bottomItem.image_url }} style={styles.collageBottomPiece} resizeMode="contain" />
+                <Image source={{ uri: bottomItem.masked_url || bottomItem.image_url }} style={styles.collageBottomPiece} resizeMode="contain" />
               )}
             </View>
 
             <View style={styles.rightCol}>
               {accessories.map((acc, index) => (
-                <Image key={index} source={{ uri: acc.image_url }} style={styles.collageSmallPiece} resizeMode="contain" />
+                <Image key={index} source={{ uri: acc.masked_url || acc.image_url }} style={styles.collageSmallPiece} resizeMode="contain" />
               ))}
               {footwearItem && (
-                <Image source={{ uri: footwearItem.image_url }} style={styles.collageSmallPiece} resizeMode="contain" />
+                <Image source={{ uri: footwearItem.masked_url || footwearItem.image_url }} style={styles.collageSmallPiece} resizeMode="contain" />
               )}
             </View>
           </View>
