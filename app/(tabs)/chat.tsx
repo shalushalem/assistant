@@ -23,11 +23,11 @@ const ChatScreen = () => {
   const isFocused = useIsFocused();
   
   const [messages, setMessages] = useState<Message[]>([
-    { id: '1', role: 'assistant', content: 'Hello! I am Ahvi. Let me check what you have in your wardrobe today!' }
+    { id: '1', role: 'assistant', content: 'Hello! I am Ahvi. What are we dressing up for today?' }
   ]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [activeChips, setActiveChips] = useState<string[]>([]);
+  const [activeChips, setActiveChips] = useState<string[]>(['Casual', 'Office', 'Party']); // Show initial chips
   const [currentMemory, setCurrentMemory] = useState('');
   const [memoryDocId, setMemoryDocId] = useState<string | null>(null);
   const [wardrobeItems, setWardrobeItems] = useState<any[]>([]);
@@ -164,19 +164,21 @@ const ChatScreen = () => {
       
       if (data.text) {
         console.log("✅ Ahvi heard:", data.text);
-        sendMessage(data.text); 
+        // Pass true here so the backend knows this was a voice command!
+        sendMessage(data.text, true); 
       } else {
         alert("Ahvi couldn't hear you clearly.");
+        setIsLoading(false);
       }
     } catch (error) {
       console.error("Transcription error:", error);
       alert("Failed to reach Ahvi's voice server.");
-    } finally {
       setIsLoading(false);
     }
   };
 
-  const sendMessage = async (textOverride?: string) => {
+  // Added isVoiceInput flag to optimize backend TTS generation
+  const sendMessage = async (textOverride?: string, isVoiceInput: boolean = false) => {
     const textToSend = textOverride || inputText;
     if (!textToSend.trim()) return;
 
@@ -191,7 +193,7 @@ const ChatScreen = () => {
     setMessages((prev) => [...prev, userMessage]);
     if (!textOverride) setInputText('');
     
-    setActiveChips([]); 
+    setActiveChips([]); // Hide chips while loading
     setIsLoading(true);
 
     try {
@@ -213,7 +215,8 @@ const ChatScreen = () => {
           language: "en",
           current_memory: currentMemory,
           user_profile: userProfile,
-          wardrobe_items: wardrobeItems 
+          wardrobe_items: wardrobeItems,
+          is_voice_input: isVoiceInput // <--- Tells Python whether to run XTTS!
         }),
       });
 
@@ -251,13 +254,11 @@ const ChatScreen = () => {
                 // XTTS generates .wav files, so we specify audio/wav here
                 const uri = `data:audio/wav;base64,${data.audio_base64}`;
                 
-                // Initialize audio playback for iOS/Android
                 await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
                 const { sound } = await Audio.Sound.createAsync({ uri });
                 
                 await sound.playAsync();
                 
-                // Unload the file to free up memory when finished
                 sound.setOnPlaybackStatusUpdate((status) => {
                     if (status.isLoaded && status.didJustFinish) {
                         sound.unloadAsync();
@@ -266,12 +267,13 @@ const ChatScreen = () => {
             } catch (audioError) {
                 console.error("❌ Failed to play cloned voice:", audioError);
             }
-        } else {
-            // Fallback just in case the server fails to clone the voice
+        } else if (isVoiceInput) {
+            // Fallback only if we expected audio but it failed
             console.log("⚠️ No base64 audio received, falling back to robot voice.");
             Speech.speak(aiResponseText);
         }
 
+        // Set the dynamic chips returned by the backend
         if (data.chips && data.chips.length > 0) {
             setActiveChips(data.chips);
         }
@@ -372,24 +374,27 @@ const ChatScreen = () => {
           </View>
         )}
 
-        {activeChips.length > 0 && (
-          <View style={{ paddingHorizontal: 16, paddingBottom: 10, backgroundColor: '#161622' }}>
+        {/* --- BEAUTIFIED CHIPS SECTION --- */}
+        {activeChips.length > 0 && !isLoading && (
+          <View style={{ paddingHorizontal: 16, paddingBottom: 12, backgroundColor: '#161622' }}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               {activeChips.map((chip, index) => (
                 <TouchableOpacity 
                   key={index}
                   style={{ 
-                    backgroundColor: '#FF9C01', 
+                    backgroundColor: 'rgba(255, 156, 1, 0.1)', // Light orange background
+                    borderWidth: 1,
+                    borderColor: '#FF9C01', // Solid orange border
                     paddingVertical: 8, 
                     paddingHorizontal: 16, 
                     borderRadius: 20, 
                     marginRight: 10,
-                    justifyContent: 'center',
+                    flexDirection: 'row',
                     alignItems: 'center'
                   }}
-                  onPress={() => sendMessage(chip)} 
+                  onPress={() => sendMessage(chip, false)} // Chip taps are sent as text
                 >
-                  <Text style={{ color: '#161622', fontWeight: 'bold' }}>{chip}</Text>
+                  <Text style={{ color: '#FF9C01', fontWeight: '600' }}>{chip}</Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -422,7 +427,7 @@ const ChatScreen = () => {
           
           {inputText.trim() ? (
             <TouchableOpacity 
-              onPress={() => sendMessage()}
+              onPress={() => sendMessage(undefined, false)} // Text button sends as text
               disabled={isLoading}
               style={{
                 backgroundColor: '#FF9C01',

@@ -49,6 +49,11 @@ export default function Wardrobe() {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('All');
 
+  // --- Pagination State ---
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [newItemName, setNewItemName] = useState('');
   const [newItemCategory, setNewItemCategory] = useState('Tops');
@@ -58,30 +63,64 @@ export default function Wardrobe() {
   const [uploading, setUploading] = useState(false);
   const [analyzingImage, setAnalyzingImage] = useState(false);
 
-  const fetchItems = async () => {
+  const fetchItems = async (isLoadMore = false) => {
+    if (!user?.$id) return;
+    
+    // Prevent fetching if we are already loading more or if there is no more data
+    if (isLoadMore && (!hasMore || loadingMore)) return;
+
     try {
-      if (!user?.$id) return;
+      if (isLoadMore) {
+        setLoadingMore(true);
+      } else {
+        setLoading(true);
+      }
+
+      const limit = 25;
+      const currentOffset = isLoadMore ? offset : 0;
+
       const response = await databases.listDocuments(
         databaseId!,
         outfitCollectionId!,
-        [Query.equal('user_id', user.$id), Query.orderDesc('$createdAt')]
+        [
+          Query.equal('user_id', user.$id), 
+          Query.orderDesc('$createdAt'),
+          Query.limit(limit),
+          Query.offset(currentOffset)
+        ]
       );
-      setItems(response.documents as OutfitItem[]);
+
+      const fetchedItems = response.documents as OutfitItem[];
+
+      if (isLoadMore) {
+        setItems(prevItems => [...prevItems, ...fetchedItems]);
+      } else {
+        setItems(fetchedItems);
+      }
+
+      // If we got exactly the limit, there might be more. If less, we've reached the end.
+      setHasMore(fetchedItems.length === limit);
+      setOffset(currentOffset + limit);
+
     } catch (error) {
       console.error('Error fetching wardrobe:', error);
     } finally {
       setLoading(false);
       setRefreshing(false);
+      setLoadingMore(false);
     }
   };
 
   useEffect(() => {
-    fetchItems();
+    // Initial fetch
+    fetchItems(false);
   }, [user]);
 
   const onRefresh = () => {
     setRefreshing(true);
-    fetchItems();
+    setHasMore(true);
+    setOffset(0);
+    fetchItems(false);
   };
 
   const pickImage = async (useCamera = false) => {
@@ -155,6 +194,7 @@ export default function Wardrobe() {
         text: "Delete",
         style: "destructive",
         onPress: async () => {
+          // Optimistic UI update
           setItems((prevItems) => prevItems.filter((i) => i.$id !== item.$id));
           
           try {
@@ -171,7 +211,8 @@ export default function Wardrobe() {
           } catch (error: any) {
             console.error("Delete Error: ", error);
             Alert.alert("Error", "Could not fully delete the item.");
-            fetchItems();
+            // Refresh to ensure UI matches DB if delete failed
+            onRefresh();
           }
         },
       },
@@ -253,7 +294,9 @@ export default function Wardrobe() {
       setNewItemImages([]);
       setNewItemName('');
       setNewItemTags('');
-      fetchItems();
+      
+      // Refresh the list to show the new item
+      onRefresh();
     } catch (error: any) {
       console.error("Upload/Database Error: ", error);
       Alert.alert('Upload Failed', error.message || 'Something went wrong.');
@@ -312,7 +355,8 @@ export default function Wardrobe() {
         </ScrollView>
       </View>
 
-      {loading ? (
+      {/* Show main loading spinner only on initial load, not when loading more */}
+      {loading && !loadingMore ? (
         <ActivityIndicator size="large" color="#FF9C01" style={{ marginTop: 50 }} />
       ) : (
         <FlatList
@@ -323,6 +367,14 @@ export default function Wardrobe() {
           contentContainerStyle={styles.listContent}
           columnWrapperStyle={styles.columnWrapper}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF9C01" />}
+          
+          // --- Infinite Scroll Triggers ---
+          onEndReached={() => fetchItems(true)} 
+          onEndReachedThreshold={0.5} 
+          ListFooterComponent={() => 
+            loadingMore ? <ActivityIndicator size="small" color="#FF9C01" style={{ marginVertical: 20 }} /> : null
+          }
+
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <Text style={styles.emptyText}>No items found in {selectedCategory}.</Text>
