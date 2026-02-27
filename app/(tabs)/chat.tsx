@@ -164,8 +164,7 @@ const ChatScreen = () => {
       
       if (data.text) {
         console.log("✅ Ahvi heard:", data.text);
-        // Pass true to indicate this came from voice
-        sendMessage(data.text, true); 
+        sendMessage(data.text); 
       } else {
         alert("Ahvi couldn't hear you clearly.");
       }
@@ -177,8 +176,7 @@ const ChatScreen = () => {
     }
   };
 
-  // Added isVoiceInput parameter defaulting to false
-  const sendMessage = async (textOverride?: string, isVoiceInput: boolean = false) => {
+  const sendMessage = async (textOverride?: string) => {
     const textToSend = textOverride || inputText;
     if (!textToSend.trim()) return;
 
@@ -215,8 +213,7 @@ const ChatScreen = () => {
           language: "en",
           current_memory: currentMemory,
           user_profile: userProfile,
-          wardrobe_items: wardrobeItems,
-          is_voice_input: isVoiceInput // Pass the flag to the backend
+          wardrobe_items: wardrobeItems 
         }),
       });
 
@@ -247,34 +244,32 @@ const ChatScreen = () => {
         setMessages((prev) => [...prev, assistantMessage]);
 
         // ---------------------------------------------------------
-        // 🎙️ PLAY YOUR CUSTOM CLONED VOICE (ONLY IF VOICE INPUT)
+        // 🎙️ PLAY YOUR CUSTOM CLONED VOICE
         // ---------------------------------------------------------
-        if (isVoiceInput) {
-            if (data.audio_base64) {
-                try {
-                    // XTTS generates .wav files, so we specify audio/wav here
-                    const uri = `data:audio/wav;base64,${data.audio_base64}`;
-                    
-                    // Initialize audio playback for iOS/Android
-                    await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
-                    const { sound } = await Audio.Sound.createAsync({ uri });
-                    
-                    await sound.playAsync();
-                    
-                    // Unload the file to free up memory when finished
-                    sound.setOnPlaybackStatusUpdate((status) => {
-                        if (status.isLoaded && status.didJustFinish) {
-                            sound.unloadAsync();
-                        }
-                    });
-                } catch (audioError) {
-                    console.error("❌ Failed to play cloned voice:", audioError);
-                }
-            } else {
-                // Fallback just in case the server fails to clone the voice
-                console.log("⚠️ No base64 audio received, falling back to robot voice.");
-                Speech.speak(aiResponseText);
+        if (data.audio_base64) {
+            try {
+                // XTTS generates .wav files, so we specify audio/wav here
+                const uri = `data:audio/wav;base64,${data.audio_base64}`;
+                
+                // Initialize audio playback for iOS/Android
+                await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
+                const { sound } = await Audio.Sound.createAsync({ uri });
+                
+                await sound.playAsync();
+                
+                // Unload the file to free up memory when finished
+                sound.setOnPlaybackStatusUpdate((status) => {
+                    if (status.isLoaded && status.didJustFinish) {
+                        sound.unloadAsync();
+                    }
+                });
+            } catch (audioError) {
+                console.error("❌ Failed to play cloned voice:", audioError);
             }
+        } else {
+            // Fallback just in case the server fails to clone the voice
+            console.log("⚠️ No base64 audio received, falling back to robot voice.");
+            Speech.speak(aiResponseText);
         }
 
         if (data.chips && data.chips.length > 0) {
