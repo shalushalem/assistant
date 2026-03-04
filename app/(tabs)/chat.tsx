@@ -1,469 +1,593 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView } from 'react-native';
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
+  FlatList,
+  Keyboard,
+  Animated
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { useIsFocused } from '@react-navigation/native';
-import { router } from 'expo-router'; 
-import { databases, appwriteConfig } from '../../lib/appwrite';
-import { useGlobalContext } from '../../context/GlobalProvider';
-import { ID, Query } from 'react-native-appwrite';
-import { Audio } from 'expo-av'; 
-import * as Speech from 'expo-speech'; 
-import * as FileSystem from 'expo-file-system/legacy';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Feather } from '@expo/vector-icons';
+
+// ── TYPES & MOCK DATA ──
+type Role = 'user' | 'ai';
 
 interface Message {
   id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  boardIds?: string; 
+  role: Role;
+  text: string;
+  time: string;
+  hasActions?: boolean;
 }
 
-const ChatScreen = () => {
-  const { user } = useGlobalContext(); 
-  const isFocused = useIsFocused();
-  
-  const [messages, setMessages] = useState<Message[]>([
-    { id: '1', role: 'assistant', content: 'Hello! I am Ahvi. What are we dressing up for today?' }
-  ]);
+const OCCASIONS = [
+  { name: 'Gym', emoji: '💪' },
+  { name: 'Office', emoji: '💼' },
+  { name: 'Party', emoji: '🎊' },
+  { name: 'Shopping', emoji: '🛍️' },
+  { name: 'Study', emoji: '📖' },
+  { name: 'Travel', emoji: '✈️' },
+  { name: 'Date Night', emoji: '❤️' },
+];
+
+const QUICK_PROMPTS = [
+  "What's trending for summer?",
+  "Suggest a minimalist outfit.",
+  "I need a cozy weekend look."
+];
+
+export default function Chat() {
+  // ── STATE ──
+  const [activeOccasion, setActiveOccasion] = useState(OCCASIONS[0]);
   const [inputText, setInputText] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [activeChips, setActiveChips] = useState<string[]>(['Casual', 'Office', 'Party']); // Show initial chips
-  const [currentMemory, setCurrentMemory] = useState('');
-  const [memoryDocId, setMemoryDocId] = useState<string | null>(null);
-  const [wardrobeItems, setWardrobeItems] = useState<any[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [isTyping, setIsTyping] = useState(false);
+  
+  const flatListRef = useRef<FlatList>(null);
+  
+  // Typing animation values
+  const dot1 = useRef(new Animated.Value(0)).current;
+  const dot2 = useRef(new Animated.Value(0)).current;
+  const dot3 = useRef(new Animated.Value(0)).current;
 
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
-
-  // Update with your local server IP
-  const SERVER_IP = 'http://192.168.29.193:8000';
-  const OLLAMA_ENDPOINT = `${SERVER_IP}/api/text`;
-  const TRANSCRIBE_ENDPOINT = `${SERVER_IP}/api/transcribe`;
-
-  // Stop Ahvi from talking if we leave the screen
-  useEffect(() => {
-    if (!isFocused) {
-      Speech.stop();
-    }
-  }, [isFocused]);
-
-  useEffect(() => {
-    const fetchData = async () => {
-      if (!user?.$id || !isFocused) return;
-      try {
-        const memResponse = await databases.listDocuments(
-          appwriteConfig.databaseId!,
-          appwriteConfig.memoryCollectionId!,
-          [Query.equal('userId', user.$id)]
-        );
-
-        if (memResponse.documents.length > 0) {
-          setCurrentMemory(memResponse.documents[0].memory);
-          setMemoryDocId(memResponse.documents[0].$id);
-        }
-
-        const wardrobeResponse = await databases.listDocuments(
-          appwriteConfig.databaseId!,
-          appwriteConfig.outfitCollectionId!,
-          [Query.equal('user_id', user.$id)] 
-        );
-
-        const simplifiedWardrobe = wardrobeResponse.documents.map(doc => ({
-          id: doc.$id,
-          name: doc.name || "Unnamed Item",
-          category: doc.category || "Unknown Category",
-          tags: doc.tags || [],
-          image_url: doc.image_url 
-        }));
-        
-        setWardrobeItems(simplifiedWardrobe);
-      } catch (error: any) {
-        console.log("❌ Error fetching user data:", error.message);
-      }
-    };
-    fetchData();
-  }, [user, isFocused]);
-
-  const startRecording = async () => {
-    try {
-      if (recording) return; 
-
-      Speech.stop(); 
-      await Audio.requestPermissionsAsync();
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-      });
-
-      const { recording: newRecording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
-      
-      setRecording(newRecording);
-      setIsRecording(true);
-    } catch (err) {
-      console.error('❌ Failed to start recording', err);
-      setRecording(null); 
-      setIsRecording(false);
-    }
+  // ── LOGIC ──
+  const getTime = () => {
+    const d = new Date();
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   };
 
-  const stopRecording = async () => {
-    if (!recording) return;
-    setIsRecording(false);
-    
-    try {
-      await recording.stopAndUnloadAsync();
-      const uri = recording.getURI(); 
+  const handleSend = (textOverride?: string) => {
+    const textToSend = textOverride || inputText.trim();
+    if (!textToSend) return;
+
+    // Add User Message
+    const newUserMsg: Message = { id: Date.now().toString(), role: 'user', text: textToSend, time: getTime() };
+    setMessages(prev => [...prev, newUserMsg]);
+    setInputText('');
+    Keyboard.dismiss();
+    setIsTyping(true);
+
+    // Simulate AI Response Delay
+    setTimeout(() => {
+      setIsTyping(false);
+      const isOutfitReq = textToSend.toLowerCase().includes('outfit') || textToSend.toLowerCase().includes('wear');
       
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-      });
-      
-      setRecording(null); 
-
-      if (uri) {
-          transcribeAudio(uri);
-      }
-    } catch (err) {
-      console.error('❌ Failed to stop recording cleanly', err);
-      setRecording(null); 
-    }
-  };
-
-  const transcribeAudio = async (uri: string) => {
-    setIsLoading(true);
-    try {
-      console.log(`📤 Uploading audio to server from ${Platform.OS}...`);
-      let data;
-
-      if (Platform.OS === 'web') {
-        const localResponse = await fetch(uri);
-        const audioBlob = await localResponse.blob();
-        
-        const formData = new FormData();
-        formData.append('file', audioBlob, 'audio_record.webm');
-
-        const serverResponse = await fetch(TRANSCRIBE_ENDPOINT, {
-          method: 'POST',
-          body: formData,
-        });
-        
-        if (!serverResponse.ok) throw new Error(`Server returned ${serverResponse.status}`);
-        data = await serverResponse.json();
-
-      } else {
-        const response = await FileSystem.uploadAsync(TRANSCRIBE_ENDPOINT, uri, {
-          fieldName: 'file',
-          httpMethod: 'POST',
-          uploadType: 1, 
-          mimeType: 'audio/m4a', 
-        });
-        data = JSON.parse(response.body);
-      }
-      
-      if (data.text) {
-        console.log("✅ Ahvi heard:", data.text);
-        // Pass true here so the backend knows this was a voice command!
-        sendMessage(data.text, true); 
-      } else {
-        alert("Ahvi couldn't hear you clearly.");
-        setIsLoading(false);
-      }
-    } catch (error) {
-      console.error("Transcription error:", error);
-      alert("Failed to reach Ahvi's voice server.");
-      setIsLoading(false);
-    }
-  };
-
-  // Added isVoiceInput flag to optimize backend TTS generation
-  const sendMessage = async (textOverride?: string, isVoiceInput: boolean = false) => {
-    const textToSend = textOverride || inputText;
-    if (!textToSend.trim()) return;
-
-    Speech.stop(); 
-
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: textToSend.trim(),
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
-    if (!textOverride) setInputText('');
-    
-    setActiveChips([]); // Hide chips while loading
-    setIsLoading(true);
-
-    try {
-      const apiMessages = [...messages, userMessage].map(msg => ({
-        role: msg.role,
-        content: msg.content
-      }));
-
-      const userProfile = {
-        username: user?.username || 'Buddy',
-        gender: user?.gender || 'male', 
-      };
-
-      const response = await fetch(OLLAMA_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: apiMessages,
-          language: "en",
-          current_memory: currentMemory,
-          user_profile: userProfile,
-          wardrobe_items: wardrobeItems,
-          is_voice_input: isVoiceInput // <--- Tells Python whether to run XTTS!
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.message) {
-        let aiResponseText = data.message.content;
-        let extractedIds: string | undefined = undefined;
-
-        const boardMatch = aiResponseText.match(/\[?STYLE_BOARD:\s*(.*?)(?:\]|\n|$)/i);
-        
-        if (boardMatch) {
-            extractedIds = boardMatch[1].trim();
-            aiResponseText = aiResponseText.replace(/\[?STYLE_BOARD:.*?(\]|\n|$)/gi, '').trim();
-            
-            router.push({
-                pathname: '/style-board',
-                params: { ids: extractedIds }
-            });
-        }
-
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          role: 'assistant',
-          content: aiResponseText,
-          boardIds: extractedIds 
-        };
-        setMessages((prev) => [...prev, assistantMessage]);
-
-        // ---------------------------------------------------------
-        // 🎙️ PLAY YOUR CUSTOM CLONED VOICE
-        // ---------------------------------------------------------
-        if (data.audio_base64) {
-            try {
-                // XTTS generates .wav files, so we specify audio/wav here
-                const uri = `data:audio/wav;base64,${data.audio_base64}`;
-                
-                await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
-                const { sound } = await Audio.Sound.createAsync({ uri });
-                
-                await sound.playAsync();
-                
-                sound.setOnPlaybackStatusUpdate((status) => {
-                    if (status.isLoaded && status.didJustFinish) {
-                        sound.unloadAsync();
-                    }
-                });
-            } catch (audioError) {
-                console.error("❌ Failed to play cloned voice:", audioError);
-            }
-        } else if (isVoiceInput) {
-            // Fallback only if we expected audio but it failed
-            console.log("⚠️ No base64 audio received, falling back to robot voice.");
-            Speech.speak(aiResponseText);
-        }
-
-        // Set the dynamic chips returned by the backend
-        if (data.chips && data.chips.length > 0) {
-            setActiveChips(data.chips);
-        }
-
-        if (data.updated_memory && data.updated_memory !== currentMemory && user?.$id) {
-          setCurrentMemory(data.updated_memory);
-          if (memoryDocId) {
-            await databases.updateDocument(
-              appwriteConfig.databaseId!,
-              appwriteConfig.memoryCollectionId!,
-              memoryDocId,
-              { memory: data.updated_memory }
-            );
-          } else {
-            const newDoc = await databases.createDocument(
-              appwriteConfig.databaseId!,
-              appwriteConfig.memoryCollectionId!,
-              ID.unique(),
-              { userId: user.$id, memory: data.updated_memory }
-            );
-            setMemoryDocId(newDoc.$id);
-          }
-        }
-      }
-    } catch (error) {
-      console.error("Error communicating with server:", error);
-      const errorMessage: Message = {
+      const newAiMsg: Message = {
         id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: 'Sorry, I am having trouble connecting right now.',
+        role: 'ai',
+        text: isOutfitReq 
+          ? `For ${activeOccasion.name}, I highly recommend a breathable mesh set or compression gear to stay cool and supported. Pair it with lightweight cross-trainers!`
+          : `That sounds great! I'm AHVI, your personal stylist. I can help you pick the perfect pieces for ${activeOccasion.name}. What specific vibe are you going for?`,
+        time: getTime(),
+        hasActions: isOutfitReq // Show save buttons if it looks like an outfit suggestion
       };
-      setMessages((prev) => [...prev, errorMessage]);
-    } finally {
-      setIsLoading(false);
-    }
+      
+      setMessages(prev => [...prev, newAiMsg]);
+    }, 1500);
   };
 
+  // Typing dots animation loop
+  useEffect(() => {
+    if (isTyping) {
+      const animateDot = (dot: Animated.Value, delay: number) => {
+        Animated.loop(
+          Animated.sequence([
+            Animated.timing(dot, { toValue: -5, duration: 300, delay, useNativeDriver: true }),
+            Animated.timing(dot, { toValue: 0, duration: 300, useNativeDriver: true }),
+            Animated.delay(600)
+          ])
+        ).start();
+      };
+      animateDot(dot1, 0);
+      animateDot(dot2, 180);
+      animateDot(dot3, 360);
+    } else {
+      dot1.stopAnimation(); dot2.stopAnimation(); dot3.stopAnimation();
+      dot1.setValue(0); dot2.setValue(0); dot3.setValue(0);
+    }
+  }, [isTyping]);
+
+  // ── RENDERERS ──
   const renderMessage = ({ item }: { item: Message }) => {
     const isUser = item.role === 'user';
+
     return (
-      <View style={{
-        alignSelf: isUser ? 'flex-end' : 'flex-start',
-        backgroundColor: isUser ? '#FF9C01' : '#232533',
-        padding: 12,
-        marginVertical: 4,
-        marginHorizontal: 16,
-        borderRadius: 16,
-        maxWidth: '80%',
-      }}>
-        {item.content ? (
-            <Text style={{ color: isUser ? '#FFFFFF' : '#CDCDE0', fontSize: 16 }}>
-            {item.content}
-            </Text>
-        ) : null}
-        
-        {item.boardIds && (
-          <TouchableOpacity 
-            style={{
-              marginTop: 10,
-              backgroundColor: '#161622',
-              paddingVertical: 10,
-              paddingHorizontal: 16,
-              borderRadius: 12,
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderWidth: 1,
-              borderColor: '#FF9C01'
-            }}
-            onPress={() => router.push({ pathname: '/style-board', params: { ids: item.boardIds } })}
-          >
-            <Ionicons name="sparkles" size={16} color="#FF9C01" style={{ marginRight: 6 }} />
-            <Text style={{ color: '#FF9C01', fontWeight: 'bold', fontSize: 14 }}>View Style Board</Text>
-          </TouchableOpacity>
+      <View style={[styles.bubbleRow, isUser ? styles.bubbleRowUser : styles.bubbleRowAi]}>
+        {!isUser && (
+          <View style={styles.bubbleAvatarAi}>
+            <Text style={{ fontSize: 14 }}>{activeOccasion.emoji}</Text>
+          </View>
+        )}
+
+        <View style={[styles.bubbleWrap, isUser ? { alignItems: 'flex-end' } : { alignItems: 'flex-start' }]}>
+          {isUser ? (
+            <LinearGradient colors={['rgba(144, 96, 208, 0.28)', 'rgba(232, 112, 144, 0.20)']} style={styles.bubbleUser}>
+              <Text style={styles.bubbleTextUser}>{item.text}</Text>
+            </LinearGradient>
+          ) : (
+            <View style={styles.bubbleAiWrap}>
+              <BlurView intensity={30} tint="light" style={styles.bubbleAi}>
+                <Text style={styles.bubbleTextAi}>{item.text}</Text>
+                
+                {/* AI Action Buttons (Save Outfit / Add Plan) */}
+                {item.hasActions && (
+                  <View style={styles.bubbleActions}>
+                    <TouchableOpacity style={styles.bubBtnSave}>
+                      <Feather name="bookmark" size={12} color="#9060d0" />
+                      <Text style={styles.bubBtnSaveText}>Save outfit</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.bubBtnPlan}>
+                      <Feather name="calendar" size={12} color="#e87090" />
+                      <Text style={styles.bubBtnPlanText}>Add to plan</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </BlurView>
+            </View>
+          )}
+          <Text style={styles.bubbleTime}>{item.time}</Text>
+        </View>
+
+        {isUser && (
+          <View style={styles.bubbleAvatarUser}>
+            <Feather name="user" size={14} color="#8070a8" />
+          </View>
         )}
       </View>
     );
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#161622' }} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
       <KeyboardAvoidingView 
-        style={{ flex: 1 }} 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.container} 
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
+        
+        {/* ── HEADER ── */}
+        <View style={styles.header}>
+          <Text style={styles.title}>AHVI Chat</Text>
+          <View style={styles.titleUnderline} />
+          <Text style={styles.subtitle}>Your personal AI styling assistant</Text>
+        </View>
+
+        {/* ── OCCASION STRIP ── */}
+        <View style={styles.occasionContainer}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.occasionStrip}>
+            {OCCASIONS.map((occ) => {
+              const isActive = activeOccasion.name === occ.name;
+              return (
+                <TouchableOpacity 
+                  key={occ.name} 
+                  style={[styles.occTab, isActive && styles.occTabActive]}
+                  onPress={() => setActiveOccasion(occ)}
+                  activeOpacity={0.8}
+                >
+                  {isActive && (
+                    <LinearGradient colors={['rgba(144, 96, 208, 0.22)', 'rgba(232, 112, 144, 0.16)']} style={StyleSheet.absoluteFillObject} />
+                  )}
+                  <Text style={{ fontSize: 13 }}>{occ.emoji}</Text>
+                  <Text style={[styles.occTabText, isActive && styles.occTabTextActive]}>{occ.name}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+
+        {/* ── CHAT AREA ── */}
         <FlatList
+          ref={flatListRef}
           data={messages}
-          keyExtractor={(item) => item.id}
+          keyExtractor={item => item.id}
           renderItem={renderMessage}
-          contentContainerStyle={{ paddingVertical: 16 }}
-          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.messagesContent}
+          showsVerticalScrollIndicator={false}
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          onLayout={() => flatListRef.current?.scrollToEnd({ animated: true })}
+          ListEmptyComponent={
+            <View style={styles.welcomeContainer}>
+              <BlurView intensity={40} tint="light" style={styles.welcomeBox}>
+                <Text style={styles.welcomeEmoji}>✨</Text>
+                <Text style={styles.welcomeTitle}>Ready to style!</Text>
+                <Text style={styles.welcomeDesc}>
+                  I'm here to help you put together the perfect {activeOccasion.name.toLowerCase()} look. Just tell me what you have in mind.
+                </Text>
+              </BlurView>
+              
+              <View style={styles.chipsWrap}>
+                {QUICK_PROMPTS.map((prompt, idx) => (
+                  <TouchableOpacity key={idx} style={styles.promptChip} onPress={() => handleSend(prompt)}>
+                    <Text style={styles.promptChipText}>{prompt}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          }
+          ListFooterComponent={
+            isTyping ? (
+              <View style={[styles.bubbleRow, styles.bubbleRowAi]}>
+                <View style={styles.bubbleAvatarAi}>
+                  <Text style={{ fontSize: 14 }}>{activeOccasion.emoji}</Text>
+                </View>
+                <BlurView intensity={30} tint="light" style={styles.typingBubble}>
+                  <Animated.View style={[styles.typingDot, { transform: [{ translateY: dot1 }] }]} />
+                  <Animated.View style={[styles.typingDot, { transform: [{ translateY: dot2 }] }]} />
+                  <Animated.View style={[styles.typingDot, { transform: [{ translateY: dot3 }] }]} />
+                </BlurView>
+              </View>
+            ) : null
+          }
         />
 
-        {isLoading && (
-          <View style={{ padding: 10, alignItems: 'flex-start', marginLeft: 16 }}>
-             <ActivityIndicator color="#FF9C01" />
-          </View>
-        )}
-
-        {/* --- BEAUTIFIED CHIPS SECTION --- */}
-        {activeChips.length > 0 && !isLoading && (
-          <View style={{ paddingHorizontal: 16, paddingBottom: 12, backgroundColor: '#161622' }}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-              {activeChips.map((chip, index) => (
-                <TouchableOpacity 
-                  key={index}
-                  style={{ 
-                    backgroundColor: 'rgba(255, 156, 1, 0.1)', // Light orange background
-                    borderWidth: 1,
-                    borderColor: '#FF9C01', // Solid orange border
-                    paddingVertical: 8, 
-                    paddingHorizontal: 16, 
-                    borderRadius: 20, 
-                    marginRight: 10,
-                    flexDirection: 'row',
-                    alignItems: 'center'
-                  }}
-                  onPress={() => sendMessage(chip, false)} // Chip taps are sent as text
-                >
-                  <Text style={{ color: '#FF9C01', fontWeight: '600' }}>{chip}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        )}
-
-        <View style={{ 
-          flexDirection: 'row', 
-          padding: 16, 
-          backgroundColor: '#232533',
-          borderTopWidth: 1,
-          borderTopColor: '#161622'
-        }}>
-          <TextInput
-            style={{
-              flex: 1,
-              backgroundColor: '#161622',
-              color: '#FFFFFF',
-              borderRadius: 20,
-              paddingHorizontal: 16,
-              paddingVertical: 10,
-              marginRight: 10,
-            }}
-            placeholder="Ask Ahvi what to wear..."
-            placeholderTextColor="#CDCDE0"
-            value={inputText}
-            onChangeText={setInputText}
-            multiline
-          />
-          
-          {inputText.trim() ? (
+        {/* ── INPUT BAR ── */}
+        <View style={styles.inputContainer}>
+          <BlurView intensity={50} tint="light" style={styles.inputInner}>
+            <TextInput
+              style={styles.inputField}
+              placeholder={`Ask AHVI about ${activeOccasion.name}...`}
+              placeholderTextColor="#a0a0a0"
+              value={inputText}
+              onChangeText={setInputText}
+              multiline
+              maxLength={200}
+            />
             <TouchableOpacity 
-              onPress={() => sendMessage(undefined, false)} // Text button sends as text
-              disabled={isLoading}
-              style={{
-                backgroundColor: '#FF9C01',
-                borderRadius: 20,
-                width: 44,
-                height: 44,
-                justifyContent: 'center',
-                alignItems: 'center',
-                opacity: isLoading ? 0.5 : 1
-              }}
+              style={[styles.sendBtn, !inputText.trim() && { opacity: 0.5 }]} 
+              onPress={() => handleSend()}
+              disabled={!inputText.trim()}
             >
-              <Ionicons name="send" size={20} color="#FFFFFF" />
+              <LinearGradient colors={['#9060d0', '#e87090']} style={StyleSheet.absoluteFillObject} start={{x:0, y:0}} end={{x:1, y:1}} />
+              <Feather name="arrow-up" size={18} color="#fff" />
             </TouchableOpacity>
-          ) : (
-            <TouchableOpacity 
-              onPressIn={startRecording}
-              onPressOut={stopRecording}
-              disabled={isLoading}
-              style={{
-                backgroundColor: isRecording ? '#FF4C4C' : '#FF9C01', 
-                borderRadius: 20,
-                width: 44,
-                height: 44,
-                justifyContent: 'center',
-                alignItems: 'center',
-                opacity: isLoading ? 0.5 : 1,
-                transform: [{ scale: isRecording ? 1.2 : 1 }] 
-              }}
-            >
-              <Ionicons name="mic" size={20} color="#FFFFFF" />
-            </TouchableOpacity>
-          )}
+          </BlurView>
         </View>
+
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
-};
+}
 
-export default ChatScreen;
+const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  container: {
+    flex: 1,
+  },
+  
+  // ── HEADER ──
+  header: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 15,
+  },
+  title: {
+    fontFamily: 'System',
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#000000',
+    letterSpacing: -0.3,
+  },
+  titleUnderline: {
+    height: 2.5,
+    width: 36,
+    borderRadius: 4,
+    marginTop: 5,
+    backgroundColor: '#9060d0', // Fallback
+  },
+  subtitle: {
+    color: '#8070a8',
+    fontSize: 13,
+    marginTop: 5,
+  },
+
+  // ── OCCASION STRIP ──
+  occasionContainer: {
+    height: 45,
+    marginBottom: 10,
+  },
+  occasionStrip: {
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    gap: 8,
+  },
+  occTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 50,
+    backgroundColor: 'rgba(255, 255, 255, 0.45)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.6)',
+    overflow: 'hidden',
+  },
+  occTabActive: {
+    borderColor: 'rgba(180, 140, 220, 0.6)',
+    shadowColor: '#9060d0',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  occTabText: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#8070a8',
+  },
+  occTabTextActive: {
+    color: '#3a2050',
+  },
+
+  // ── CHAT MESSAGES ──
+  messagesContent: {
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 100, // Cushion for bottom input and nav bar
+  },
+  
+  // ── EMPTY/WELCOME STATE ──
+  welcomeContainer: {
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  welcomeBox: {
+    width: '100%',
+    padding: 20,
+    borderRadius: 22,
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.4)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.6)',
+    marginBottom: 20,
+  },
+  welcomeEmoji: {
+    fontSize: 38,
+    marginBottom: 10,
+  },
+  welcomeTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#000000',
+    marginBottom: 5,
+  },
+  welcomeDesc: {
+    fontSize: 12.5,
+    color: '#8070a8',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  chipsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  promptChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 50,
+    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.7)',
+  },
+  promptChipText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#3a2050',
+  },
+
+  // ── BUBBLES ──
+  bubbleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    marginBottom: 16,
+    gap: 8,
+  },
+  bubbleRowUser: {
+    justifyContent: 'flex-end',
+  },
+  bubbleRowAi: {
+    justifyContent: 'flex-start',
+  },
+  bubbleWrap: {
+    maxWidth: '80%',
+  },
+  
+  // User Bubble
+  bubbleUser: {
+    paddingVertical: 11,
+    paddingHorizontal: 15,
+    borderRadius: 18,
+    borderBottomRightRadius: 5,
+    borderWidth: 1,
+    borderColor: 'rgba(180, 140, 220, 0.42)',
+  },
+  bubbleTextUser: {
+    fontSize: 13.5,
+    color: '#3a2050',
+    lineHeight: 20,
+  },
+  bubbleAvatarUser: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.6)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.8)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // AI Bubble
+  bubbleAiWrap: {
+    borderRadius: 18,
+    borderBottomLeftRadius: 5,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.7)',
+  },
+  bubbleAi: {
+    paddingVertical: 12,
+    paddingHorizontal: 15,
+    backgroundColor: 'rgba(255, 255, 255, 0.6)',
+  },
+  bubbleTextAi: {
+    fontSize: 13.5,
+    color: '#3a2050',
+    lineHeight: 20,
+  },
+  bubbleAvatarAi: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.6)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.8)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  
+  // Actions inside AI Bubble
+  bubbleActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+    flexWrap: 'wrap',
+  },
+  bubBtnSave: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 50,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    borderWidth: 1,
+    borderColor: 'rgba(160, 122, 208, 0.4)',
+  },
+  bubBtnSaveText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#9060d0',
+  },
+  bubBtnPlan: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 50,
+    backgroundColor: 'rgba(232, 112, 144, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(232, 112, 144, 0.4)',
+  },
+  bubBtnPlanText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#e87090',
+  },
+
+  bubbleTime: {
+    fontSize: 10,
+    color: '#b8aed0',
+    marginTop: 4,
+    paddingHorizontal: 4,
+  },
+
+  // ── TYPING ANIMATION ──
+  typingBubble: {
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+    borderRadius: 18,
+    borderBottomLeftRadius: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(255, 255, 255, 0.6)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.7)',
+  },
+  typingDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#9060d0',
+  },
+
+  // ── INPUT BAR ──
+  inputContainer: {
+    position: 'absolute',
+    bottom: 90, // Above the global tab bar
+    left: 0,
+    right: 0,
+    paddingHorizontal: 18,
+  },
+  inputInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.8)',
+    borderRadius: 22,
+    paddingVertical: 6,
+    paddingLeft: 16,
+    paddingRight: 6,
+    shadowColor: '#502878',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.1,
+    shadowRadius: 20,
+    elevation: 5,
+    overflow: 'hidden',
+  },
+  inputField: {
+    flex: 1,
+    minHeight: 36,
+    maxHeight: 100,
+    fontFamily: 'System',
+    fontSize: 14,
+    color: '#3a2050',
+    paddingTop: 8,
+    paddingBottom: 8,
+  },
+  sendBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
+    overflow: 'hidden',
+  },
+});
