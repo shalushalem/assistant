@@ -30,8 +30,11 @@ import { appwriteConfig, databases, uploadFile, deleteFileFromR2 } from '../../l
 const { width, height } = Dimensions.get('window');
 
 const { databaseId, outfitCollectionId } = appwriteConfig;
-const AI_ANALYZE_ENDPOINT = 'http://192.168.29.193:8000/api/analyze-image';
-const BG_REMOVE_ENDPOINT = 'http://192.168.29.193:8000/api/remove-bg';
+
+// USE ENV VARIABLE INSTEAD OF HARDCODED IP
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
+const AI_ANALYZE_ENDPOINT = `${API_BASE_URL}/api/analyze-image`;
+const BG_REMOVE_ENDPOINT = `${API_BASE_URL}/api/remove-bg`;
 
 type OutfitItem = Models.Document & {
   name: string;
@@ -43,7 +46,7 @@ type OutfitItem = Models.Document & {
   image_id: string;
   masked_url?: string; 
   masked_id?: string;
-  worn?: number; // Added for UI compatibility
+  worn?: number;
 };
 
 const CATEGORIES = ['All', 'Tops', 'Bottoms', 'Footwear', 'Outerwear', 'Accessories', 'Dresses'];
@@ -57,17 +60,14 @@ export default function Wardrobe() {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('All');
 
-  // --- Pagination State ---
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  // --- Modals State ---
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [isLensVisible, setIsLensVisible] = useState(false);
   const [isInsightsVisible, setIsInsightsVisible] = useState(false);
 
-  // --- Add Item State ---
   const [newItemName, setNewItemName] = useState('');
   const [newItemCategory, setNewItemCategory] = useState('Tops');
   const [newItemTags, setNewItemTags] = useState('');
@@ -98,8 +98,6 @@ export default function Wardrobe() {
       );
 
       const fetchedItems = response.documents as OutfitItem[];
-
-      // Map to ensure worn exists for UI
       const formattedItems = fetchedItems.map(item => ({ ...item, worn: item.worn || 0 }));
 
       if (isLoadMore) {
@@ -130,7 +128,6 @@ export default function Wardrobe() {
     fetchItems(false);
   };
 
-  // --- Image Pick & AI Logic (Untouched) ---
   const pickImage = async (useCamera = false) => {
     try {
       let result;
@@ -278,11 +275,6 @@ export default function Wardrobe() {
   };
 
   const filteredItems = selectedCategory === 'All' ? items : items.filter(item => item.category === selectedCategory);
-
-  const getCatEmoji = (cat: string) => {
-    const map: any = { Tops: '👕', Bottoms: '👖', Outerwear: '🧥', Footwear: '👟', Dresses: '👗', Accessories: '👜' };
-    return map[cat] || '✨';
-  };
 
   const renderItem = ({ item }: { item: OutfitItem }) => (
     <TouchableOpacity style={styles.itemCard} activeOpacity={0.9}>
@@ -581,109 +573,23 @@ export default function Wardrobe() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: 'transparent' },
-  
-  // ── HEADER ──
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    marginBottom: 20,
-    marginTop: 10,
-  },
-  sectionTitle: {
-    fontFamily: 'System', 
-    fontSize: 34,
-    fontWeight: '300',
-    color: '#1a1a1a',
-  },
-  sectionMeta: {
-    fontSize: 11,
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-    color: '#6b6b6b',
-    marginTop: 4,
-  },
-  headerBtnRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-
-  // ── BUTTONS ──
-  btnPrimary: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 100,
-    overflow: 'hidden',
-    shadowColor: '#9680D8',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 5,
-  },
-  btnPrimaryText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '600',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
-  btnSecondary: {
-    flexDirection: 'row',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.9)',
-    borderRadius: 100,
-    backgroundColor: 'rgba(255, 255, 255, 0.6)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  btnSecondaryText: {
-    color: '#6b6b6b',
-    fontSize: 10,
-    fontWeight: '600',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
-
-  // ── FILTERS ──
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginBottom: 20, marginTop: 10 },
+  sectionTitle: { fontFamily: 'System', fontSize: 34, fontWeight: '300', color: '#1a1a1a' },
+  sectionMeta: { fontSize: 11, letterSpacing: 1.2, textTransform: 'uppercase', color: '#6b6b6b', marginTop: 4 },
+  headerBtnRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  btnPrimary: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 100, overflow: 'hidden', shadowColor: '#9680D8', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 5 },
+  btnPrimaryText: { color: '#fff', fontSize: 10, fontWeight: '600', letterSpacing: 1, textTransform: 'uppercase' },
+  btnSecondary: { flexDirection: 'row', paddingVertical: 10, paddingHorizontal: 16, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.9)', borderRadius: 100, backgroundColor: 'rgba(255, 255, 255, 0.6)', alignItems: 'center', justifyContent: 'center' },
+  btnSecondaryText: { color: '#6b6b6b', fontSize: 10, fontWeight: '600', letterSpacing: 1, textTransform: 'uppercase' },
   categoryContainer: { height: 50, marginBottom: 10 },
   filterBar: { paddingHorizontal: 20, alignItems: 'center' },
-  filterChip: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 100,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.7)',
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
-    marginRight: 8,
-    overflow: 'hidden',
-  },
+  filterChip: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 100, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.7)', backgroundColor: 'rgba(255, 255, 255, 0.5)', marginRight: 8, overflow: 'hidden' },
   filterChipActive: { borderColor: 'transparent' },
   filterChipText: { fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: '#6b6b6b' },
   filterChipTextActive: { color: '#fff', fontWeight: 'bold' },
-
-  // ── ITEM GRID ──
   listContent: { paddingHorizontal: 16, paddingBottom: 130 },
   columnWrapper: { justifyContent: 'space-between' },
-  itemCard: {
-    width: (width - 44) / 2,
-    backgroundColor: 'rgba(255, 255, 255, 0.65)',
-    borderRadius: 22,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.9)',
-    overflow: 'hidden',
-    shadowColor: '#7850B4',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 15,
-    elevation: 3,
-  },
+  itemCard: { width: (width - 44) / 2, backgroundColor: 'rgba(255, 255, 255, 0.65)', borderRadius: 22, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.9)', overflow: 'hidden', shadowColor: '#7850B4', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 15, elevation: 3 },
   itemImg: { width: '100%', height: 180, backgroundColor: 'rgba(255, 255, 255, 0.2)' },
   itemBody: { padding: 12, backgroundColor: 'rgba(255, 255, 255, 0.4)', borderTopWidth: 1, borderTopColor: 'rgba(255, 255, 255, 0.5)' },
   itemName: { fontSize: 15, fontWeight: '600', color: '#1a1a1a', marginBottom: 4 },
@@ -693,19 +599,14 @@ const styles = StyleSheet.create({
   wornText: { fontSize: 9, fontWeight: 'bold', color: '#6b6b6b' },
   deleteBtn: { position: 'absolute', top: 10, right: 10, borderRadius: 20, overflow: 'hidden' },
   iconBtnBlur: { padding: 8, borderRadius: 20, backgroundColor: 'rgba(255, 255, 255, 0.6)' },
-
   emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
   emptyTitle: { fontSize: 22, color: '#1a1a1a', fontWeight: '300', marginBottom: 8 },
   emptySub: { fontSize: 12, color: '#6b6b6b', textAlign: 'center', maxWidth: 260, lineHeight: 18 },
-
-  // ── MODALS SHARED ──
   modalOverlay: { flex: 1, backgroundColor: 'rgba(20, 12, 36, 0.4)', justifyContent: 'flex-end' },
   modalContent: { borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 24, maxHeight: '90%', backgroundColor: 'rgba(255, 255, 255, 0.85)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.95)' },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
   modalTitle: { fontSize: 26, color: '#1a1a1a', fontWeight: '300' },
   iconBtn: { padding: 4 },
-
-  // ── ADD MODAL FORM ──
   field: { marginBottom: 20 },
   label: { fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.2, color: '#6b6b6b', marginBottom: 8 },
   input: { backgroundColor: 'rgba(255, 255, 255, 0.65)', borderWidth: 1, borderColor: 'rgba(190, 170, 230, 0.3)', padding: 14, borderRadius: 14, fontSize: 14, color: '#1a1a1a' },
@@ -720,8 +621,6 @@ const styles = StyleSheet.create({
   occChipTextActive: { color: '#fff', fontWeight: 'bold' },
   loadingRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 15, backgroundColor: 'rgba(224, 112, 144, 0.1)', padding: 12, borderRadius: 10 },
   modalFooter: { flexDirection: 'row', gap: 10, marginTop: 10, marginBottom: 20, paddingTop: 20, borderTopWidth: 1, borderTopColor: 'rgba(190, 170, 230, 0.2)' },
-
-  // ── INSIGHTS MODAL ──
   statsRow: { flexDirection: 'row', gap: 14, marginBottom: 30 },
   statCard: { flex: 1, backgroundColor: 'rgba(255, 255, 255, 0.6)', padding: 20, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.9)' },
   statNum: { fontSize: 36, fontWeight: '300', color: '#1a1a1a', marginBottom: 4 },
@@ -731,120 +630,19 @@ const styles = StyleSheet.create({
   statBarLabel: { width: 80, fontSize: 10, textTransform: 'uppercase', color: '#6b6b6b' },
   statBarBg: { flex: 1, height: 16, backgroundColor: 'rgba(190, 170, 230, 0.2)', borderRadius: 8, marginHorizontal: 10, overflow: 'hidden' },
   statBarCount: { width: 30, fontSize: 12, color: '#1a1a1a', textAlign: 'right' },
-
-  // ── AHVI LENS FAB ──
-  ahviFab: {
-    position: 'absolute',
-    bottom: 95, // Above the bottom tab bar
-    right: 20,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#7b6cc8',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 15,
-    elevation: 8,
-    overflow: 'hidden'
-  },
-
-  // ── AHVI LENS SHEET ──
-  lensOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(30, 20, 50, 0.35)',
-    justifyContent: 'flex-end',
-  },
-  lensSheet: {
-    backgroundColor: 'rgba(255, 248, 255, 0.98)',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 40,
-    shadowColor: '#7850B4',
-    shadowOffset: { width: 0, height: -8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 20,
-    elevation: 20,
-  },
-  lensHandle: {
-    width: 40,
-    height: 4,
-    backgroundColor: 'rgba(150, 128, 216, 0.3)',
-    borderRadius: 2,
-    alignSelf: 'center',
-    marginBottom: 18,
-  },
-  lensHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  lensBrandRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  lensIconWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(190, 170, 230, 0.3)',
-    overflow: 'hidden'
-  },
-  lensBrandName: {
-    fontFamily: 'System',
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#1a1a1a',
-  },
-  lensCloseBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
-    borderWidth: 1,
-    borderColor: 'rgba(190, 170, 230, 0.35)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  lensOptions: {
-    gap: 10,
-  },
-  lensOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.9)',
-    borderRadius: 18,
-    padding: 15,
-  },
-  lensOptionIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 15,
-  },
-  lensOptionTextWrap: {
-    flex: 1,
-  },
-  lensOptionTitle: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#1a1a1a',
-    marginBottom: 2,
-  },
-  lensOptionDesc: {
-    fontSize: 11,
-    color: '#6b6b6b',
-  },
+  ahviFab: { position: 'absolute', bottom: 95, right: 20, width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', shadowColor: '#7b6cc8', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 15, elevation: 8, overflow: 'hidden' },
+  lensOverlay: { flex: 1, backgroundColor: 'rgba(30, 20, 50, 0.35)', justifyContent: 'flex-end' },
+  lensSheet: { backgroundColor: 'rgba(255, 248, 255, 0.98)', borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 20, paddingTop: 12, paddingBottom: 40, shadowColor: '#7850B4', shadowOffset: { width: 0, height: -8 }, shadowOpacity: 0.15, shadowRadius: 20, elevation: 20 },
+  lensHandle: { width: 40, height: 4, backgroundColor: 'rgba(150, 128, 216, 0.3)', borderRadius: 2, alignSelf: 'center', marginBottom: 18 },
+  lensHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  lensBrandRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  lensIconWrap: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(190, 170, 230, 0.3)', overflow: 'hidden' },
+  lensBrandName: { fontFamily: 'System', fontSize: 20, fontWeight: '600', color: '#1a1a1a' },
+  lensCloseBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(255, 255, 255, 0.7)', borderWidth: 1, borderColor: 'rgba(190, 170, 230, 0.35)', alignItems: 'center', justifyContent: 'center' },
+  lensOptions: { gap: 10 },
+  lensOption: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255, 255, 255, 0.8)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.9)', borderRadius: 18, padding: 15 },
+  lensOptionIcon: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginRight: 15 },
+  lensOptionTextWrap: { flex: 1 },
+  lensOptionTitle: { fontSize: 14, fontWeight: '500', color: '#1a1a1a', marginBottom: 2 },
+  lensOptionDesc: { fontSize: 11, color: '#6b6b6b' },
 });

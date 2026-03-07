@@ -16,9 +16,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
+import { useGlobalContext } from '../../context/GlobalProvider';
 
 // ── TYPES & MOCK DATA ──
-type Role = 'user' | 'ai';
+type Role = 'user' | 'ai' | 'assistant';
 
 interface Message {
   id: string;
@@ -45,6 +46,8 @@ const QUICK_PROMPTS = [
 ];
 
 export default function Chat() {
+  const { user } = useGlobalContext(); // Fetch the current user
+
   // ── STATE ──
   const [activeOccasion, setActiveOccasion] = useState(OCCASIONS[0]);
   const [inputText, setInputText] = useState('');
@@ -64,34 +67,92 @@ export default function Chat() {
     return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   };
 
-  const handleSend = (textOverride?: string) => {
+  const handleSend = async (textOverride?: string) => {
     const textToSend = textOverride || inputText.trim();
     if (!textToSend) return;
 
-    // Add User Message
+    // 1. Add User Message to UI instantly
     const newUserMsg: Message = { id: Date.now().toString(), role: 'user', text: textToSend, time: getTime() };
-    setMessages(prev => [...prev, newUserMsg]);
+    
+    // Create a new array with the current history to send to the API
+    const currentHistory = [...messages, newUserMsg];
+    
+    setMessages(currentHistory);
     setInputText('');
     Keyboard.dismiss();
     setIsTyping(true);
 
-    // Simulate AI Response Delay
-    setTimeout(() => {
-      setIsTyping(false);
-      const isOutfitReq = textToSend.toLowerCase().includes('outfit') || textToSend.toLowerCase().includes('wear');
+    try {
+      // 2. Point to the correct endpoint: /api/text
+      const API_URL = `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/text`;
+      
+      // 3. Format the messages array to match the Python `Message` class requirements
+      const apiMessages = currentHistory.map(m => ({
+        role: m.role === 'ai' ? 'assistant' : m.role, // Python expects 'assistant', not 'ai'
+        content: m.text
+      }));
+
+      // 4. Build the exact payload expected by TextChatRequest in Python
+      const payload = {
+        messages: apiMessages,
+        language: "en",
+        current_memory: "", 
+        user_profile: {
+          username: user?.name || "Buddy",
+          gender: user?.gender || "male"
+        },
+        wardrobe_items: [] // In the future, pass Appwrite wardrobe items here
+      };
+
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      // 5. Advanced Error Logging
+      if (!response.ok) {
+        const errorText = await response.text(); 
+        console.error(`Backend Error (${response.status}):`, errorText);
+        throw new Error(`Server returned ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      // Check if Python caught an internal error (like Ollama being down)
+      if (data.error) {
+         console.error("Python Internal Error:", data.error);
+         throw new Error(data.error);
+      }
+
+      // 6. Parse the response based on the Python return dictionary
+      const aiResponseText = data.message?.content || "I'm having trouble thinking right now.";
       
       const newAiMsg: Message = {
         id: (Date.now() + 1).toString(),
-        role: 'ai',
-        text: isOutfitReq 
-          ? `For ${activeOccasion.name}, I highly recommend a breathable mesh set or compression gear to stay cool and supported. Pair it with lightweight cross-trainers!`
-          : `That sounds great! I'm AHVI, your personal stylist. I can help you pick the perfect pieces for ${activeOccasion.name}. What specific vibe are you going for?`,
+        role: 'assistant',
+        text: aiResponseText,
         time: getTime(),
-        hasActions: isOutfitReq // Show save buttons if it looks like an outfit suggestion
+        hasActions: data.images && data.images.length > 0 // Show buttons if style boards were generated
       };
       
       setMessages(prev => [...prev, newAiMsg]);
-    }, 1500);
+
+    } catch (error) {
+      console.error("Chat API Error:", error);
+      const errorMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        text: "Sorry, I couldn't reach the styling server right now. Please check your connection and the console logs.",
+        time: getTime(),
+        hasActions: false
+      };
+      setMessages(prev => [...prev, errorMsg]);
+    } finally {
+      setIsTyping(false);
+    }
   };
 
   // Typing dots animation loop
@@ -137,7 +198,7 @@ export default function Chat() {
               <BlurView intensity={30} tint="light" style={styles.bubbleAi}>
                 <Text style={styles.bubbleTextAi}>{item.text}</Text>
                 
-                {/* AI Action Buttons (Save Outfit / Add Plan) */}
+                {/* AI Action Buttons */}
                 {item.hasActions && (
                   <View style={styles.bubbleActions}>
                     <TouchableOpacity style={styles.bubBtnSave}>
@@ -277,317 +338,48 @@ export default function Chat() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: 'transparent',
-  },
-  container: {
-    flex: 1,
-  },
-  
-  // ── HEADER ──
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 15,
-  },
-  title: {
-    fontFamily: 'System',
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#000000',
-    letterSpacing: -0.3,
-  },
-  titleUnderline: {
-    height: 2.5,
-    width: 36,
-    borderRadius: 4,
-    marginTop: 5,
-    backgroundColor: '#9060d0', // Fallback
-  },
-  subtitle: {
-    color: '#8070a8',
-    fontSize: 13,
-    marginTop: 5,
-  },
-
-  // ── OCCASION STRIP ──
-  occasionContainer: {
-    height: 45,
-    marginBottom: 10,
-  },
-  occasionStrip: {
-    paddingHorizontal: 20,
-    alignItems: 'center',
-    gap: 8,
-  },
-  occTab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 50,
-    backgroundColor: 'rgba(255, 255, 255, 0.45)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.6)',
-    overflow: 'hidden',
-  },
-  occTabActive: {
-    borderColor: 'rgba(180, 140, 220, 0.6)',
-    shadowColor: '#9060d0',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 2,
-  },
-  occTabText: {
-    fontSize: 12.5,
-    fontWeight: '600',
-    color: '#8070a8',
-  },
-  occTabTextActive: {
-    color: '#3a2050',
-  },
-
-  // ── CHAT MESSAGES ──
-  messagesContent: {
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: 100, // Cushion for bottom input and nav bar
-  },
-  
-  // ── EMPTY/WELCOME STATE ──
-  welcomeContainer: {
-    alignItems: 'center',
-    marginTop: 20,
-  },
-  welcomeBox: {
-    width: '100%',
-    padding: 20,
-    borderRadius: 22,
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.4)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.6)',
-    marginBottom: 20,
-  },
-  welcomeEmoji: {
-    fontSize: 38,
-    marginBottom: 10,
-  },
-  welcomeTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#000000',
-    marginBottom: 5,
-  },
-  welcomeDesc: {
-    fontSize: 12.5,
-    color: '#8070a8',
-    textAlign: 'center',
-    lineHeight: 18,
-  },
-  chipsWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  promptChip: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 50,
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.7)',
-  },
-  promptChipText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#3a2050',
-  },
-
-  // ── BUBBLES ──
-  bubbleRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    marginBottom: 16,
-    gap: 8,
-  },
-  bubbleRowUser: {
-    justifyContent: 'flex-end',
-  },
-  bubbleRowAi: {
-    justifyContent: 'flex-start',
-  },
-  bubbleWrap: {
-    maxWidth: '80%',
-  },
-  
-  // User Bubble
-  bubbleUser: {
-    paddingVertical: 11,
-    paddingHorizontal: 15,
-    borderRadius: 18,
-    borderBottomRightRadius: 5,
-    borderWidth: 1,
-    borderColor: 'rgba(180, 140, 220, 0.42)',
-  },
-  bubbleTextUser: {
-    fontSize: 13.5,
-    color: '#3a2050',
-    lineHeight: 20,
-  },
-  bubbleAvatarUser: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.6)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.8)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  // AI Bubble
-  bubbleAiWrap: {
-    borderRadius: 18,
-    borderBottomLeftRadius: 5,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.7)',
-  },
-  bubbleAi: {
-    paddingVertical: 12,
-    paddingHorizontal: 15,
-    backgroundColor: 'rgba(255, 255, 255, 0.6)',
-  },
-  bubbleTextAi: {
-    fontSize: 13.5,
-    color: '#3a2050',
-    lineHeight: 20,
-  },
-  bubbleAvatarAi: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.6)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.8)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  
-  // Actions inside AI Bubble
-  bubbleActions: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 10,
-    flexWrap: 'wrap',
-  },
-  bubBtnSave: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 50,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    borderWidth: 1,
-    borderColor: 'rgba(160, 122, 208, 0.4)',
-  },
-  bubBtnSaveText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#9060d0',
-  },
-  bubBtnPlan: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 50,
-    backgroundColor: 'rgba(232, 112, 144, 0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(232, 112, 144, 0.4)',
-  },
-  bubBtnPlanText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#e87090',
-  },
-
-  bubbleTime: {
-    fontSize: 10,
-    color: '#b8aed0',
-    marginTop: 4,
-    paddingHorizontal: 4,
-  },
-
-  // ── TYPING ANIMATION ──
-  typingBubble: {
-    paddingVertical: 14,
-    paddingHorizontal: 18,
-    borderRadius: 18,
-    borderBottomLeftRadius: 5,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: 'rgba(255, 255, 255, 0.6)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.7)',
-  },
-  typingDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#9060d0',
-  },
-
-  // ── INPUT BAR ──
-  inputContainer: {
-    position: 'absolute',
-    bottom: 90, // Above the global tab bar
-    left: 0,
-    right: 0,
-    paddingHorizontal: 18,
-  },
-  inputInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.8)',
-    borderRadius: 22,
-    paddingVertical: 6,
-    paddingLeft: 16,
-    paddingRight: 6,
-    shadowColor: '#502878',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.1,
-    shadowRadius: 20,
-    elevation: 5,
-    overflow: 'hidden',
-  },
-  inputField: {
-    flex: 1,
-    minHeight: 36,
-    maxHeight: 100,
-    fontFamily: 'System',
-    fontSize: 14,
-    color: '#3a2050',
-    paddingTop: 8,
-    paddingBottom: 8,
-  },
-  sendBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 8,
-    overflow: 'hidden',
-  },
+  safeArea: { flex: 1, backgroundColor: 'transparent' },
+  container: { flex: 1 },
+  header: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 15 },
+  title: { fontFamily: 'System', fontSize: 28, fontWeight: '700', color: '#000000', letterSpacing: -0.3 },
+  titleUnderline: { height: 2.5, width: 36, borderRadius: 4, marginTop: 5, backgroundColor: '#9060d0' },
+  subtitle: { color: '#8070a8', fontSize: 13, marginTop: 5 },
+  occasionContainer: { height: 45, marginBottom: 10 },
+  occasionStrip: { paddingHorizontal: 20, alignItems: 'center', gap: 8 },
+  occTab: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 14, borderRadius: 50, backgroundColor: 'rgba(255, 255, 255, 0.45)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.6)', overflow: 'hidden' },
+  occTabActive: { borderColor: 'rgba(180, 140, 220, 0.6)', shadowColor: '#9060d0', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 10, elevation: 2 },
+  occTabText: { fontSize: 12.5, fontWeight: '600', color: '#8070a8' },
+  occTabTextActive: { color: '#3a2050' },
+  messagesContent: { paddingHorizontal: 18, paddingTop: 10, paddingBottom: 100 },
+  welcomeContainer: { alignItems: 'center', marginTop: 20 },
+  welcomeBox: { width: '100%', padding: 20, borderRadius: 22, alignItems: 'center', backgroundColor: 'rgba(255, 255, 255, 0.4)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.6)', marginBottom: 20 },
+  welcomeEmoji: { fontSize: 38, marginBottom: 10 },
+  welcomeTitle: { fontSize: 17, fontWeight: '700', color: '#000000', marginBottom: 5 },
+  welcomeDesc: { fontSize: 12.5, color: '#8070a8', textAlign: 'center', lineHeight: 18 },
+  chipsWrap: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8 },
+  promptChip: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 50, backgroundColor: 'rgba(255, 255, 255, 0.5)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.7)' },
+  promptChipText: { fontSize: 12, fontWeight: '500', color: '#3a2050' },
+  bubbleRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 16, gap: 8 },
+  bubbleRowUser: { justifyContent: 'flex-end' },
+  bubbleRowAi: { justifyContent: 'flex-start' },
+  bubbleWrap: { maxWidth: '80%' },
+  bubbleUser: { paddingVertical: 11, paddingHorizontal: 15, borderRadius: 18, borderBottomRightRadius: 5, borderWidth: 1, borderColor: 'rgba(180, 140, 220, 0.42)' },
+  bubbleTextUser: { fontSize: 13.5, color: '#3a2050', lineHeight: 20 },
+  bubbleAvatarUser: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(255, 255, 255, 0.6)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.8)', alignItems: 'center', justifyContent: 'center' },
+  bubbleAiWrap: { borderRadius: 18, borderBottomLeftRadius: 5, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.7)' },
+  bubbleAi: { paddingVertical: 12, paddingHorizontal: 15, backgroundColor: 'rgba(255, 255, 255, 0.6)' },
+  bubbleTextAi: { fontSize: 13.5, color: '#3a2050', lineHeight: 20 },
+  bubbleAvatarAi: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(255, 255, 255, 0.6)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.8)', alignItems: 'center', justifyContent: 'center' },
+  bubbleActions: { flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' },
+  bubBtnSave: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 50, backgroundColor: 'rgba(255, 255, 255, 0.9)', borderWidth: 1, borderColor: 'rgba(160, 122, 208, 0.4)' },
+  bubBtnSaveText: { fontSize: 11, fontWeight: '700', color: '#9060d0' },
+  bubBtnPlan: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 50, backgroundColor: 'rgba(232, 112, 144, 0.15)', borderWidth: 1, borderColor: 'rgba(232, 112, 144, 0.4)' },
+  bubBtnPlanText: { fontSize: 11, fontWeight: '700', color: '#e87090' },
+  bubbleTime: { fontSize: 10, color: '#b8aed0', marginTop: 4, paddingHorizontal: 4 },
+  typingBubble: { paddingVertical: 14, paddingHorizontal: 18, borderRadius: 18, borderBottomLeftRadius: 5, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(255, 255, 255, 0.6)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.7)' },
+  typingDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#9060d0' },
+  inputContainer: { position: 'absolute', bottom: 90, left: 0, right: 0, paddingHorizontal: 18 },
+  inputInner: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255, 255, 255, 0.7)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.8)', borderRadius: 22, paddingVertical: 6, paddingLeft: 16, paddingRight: 6, shadowColor: '#502878', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.1, shadowRadius: 20, elevation: 5, overflow: 'hidden' },
+  inputField: { flex: 1, minHeight: 36, maxHeight: 100, fontFamily: 'System', fontSize: 14, color: '#3a2050', paddingTop: 8, paddingBottom: 8 },
+  sendBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginLeft: 8, overflow: 'hidden' },
 });
