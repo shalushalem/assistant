@@ -17,7 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router'; // 🟢 NEW: Import router
+import { useRouter } from 'expo-router'; 
 import { useGlobalContext } from '../../context/GlobalProvider';
 import { databases, appwriteConfig } from '../../lib/appwrite'; 
 import { Query } from 'react-native-appwrite'; 
@@ -31,7 +31,7 @@ interface Message {
   time: string;
   hasActions?: boolean;
   images?: string[];
-  boardIds?: string[]; // 🟢 NEW: Store the IDs from Python
+  boardIds?: string; // 🟢 Now a single string of comma-separated IDs!
 }
 
 const OCCASIONS = [
@@ -52,7 +52,7 @@ const QUICK_PROMPTS = [
 
 export default function Chat() {
   const { user } = useGlobalContext(); 
-  const router = useRouter(); // 🟢 NEW: Initialize router
+  const router = useRouter(); 
 
   const [activeOccasion, setActiveOccasion] = useState(OCCASIONS[0]);
   const [inputText, setInputText] = useState('');
@@ -137,9 +137,9 @@ export default function Chat() {
         role: 'assistant',
         text: aiResponseText,
         time: getTime(),
-        hasActions: data.images && data.images.length > 0,
+        hasActions: !!data.board_ids || (data.images && data.images.length > 0),
         images: data.images,
-        boardIds: data.board_ids // 🟢 NEW: Save IDs to state
+        boardIds: data.board_ids // 🟢 Save the string to state
       };
       
       setMessages(prev => [...prev, newAiMsg]);
@@ -200,31 +200,19 @@ export default function Chat() {
               <BlurView intensity={30} tint="light" style={styles.bubbleAi}>
                 {item.text.length > 0 && <Text style={styles.bubbleTextAi}>{item.text}</Text>}
                 
-                {/* 🟢 RENDER BOARDS WITH INTERACTIVE BUTTONS */}
-                {item.images && item.images.length > 0 && (
-                  <View style={styles.styleBoardContainer}>
-                    {item.images.map((base64String, index) => (
-                      <View key={index} style={styles.boardWrapper}>
-                        <Image 
-                          source={{ uri: `data:image/jpeg;base64,${base64String}` }}
-                          style={styles.styleBoardImage}
-                          resizeMode="contain"
-                        />
-                        {item.boardIds && item.boardIds[index] && (
-                          <TouchableOpacity 
-                            style={styles.boardLinkBtn}
-                            // 🟢 NEW: Route to style-board screen and pass the comma separated IDs!
-                            onPress={() => router.push({ pathname: '/style-board', params: { ids: item.boardIds![index] } })}
-                          >
-                            <LinearGradient colors={['#7b6cc8', '#e07090']} style={StyleSheet.absoluteFillObject} start={{x:0, y:0}} end={{x:1, y:1}} />
-                            <Feather name="maximize-2" size={12} color="#fff" />
-                            <Text style={styles.boardLinkBtnText}>Open Style Board</Text>
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                    ))}
+                {/* 🟢 RENDER THE VIEW STYLE BOARD BUTTON */}
+                {item.boardIds ? (
+                  <View style={{ marginTop: 8 }}>
+                    <TouchableOpacity 
+                      style={styles.boardLinkBtn}
+                      onPress={() => router.push({ pathname: '/style-board', params: { ids: item.boardIds } })}
+                    >
+                      <LinearGradient colors={['#7b6cc8', '#e07090']} style={StyleSheet.absoluteFillObject} start={{x:0, y:0}} end={{x:1, y:1}} />
+                      <Feather name="layout" size={14} color="#fff" />
+                      <Text style={styles.boardLinkBtnText}>View Style Board</Text>
+                    </TouchableOpacity>
                   </View>
-                )}
+                ) : null}
                 
               </BlurView>
             </View>
@@ -380,12 +368,9 @@ const styles = StyleSheet.create({
   bubbleTextAi: { fontSize: 13.5, color: '#3a2050', lineHeight: 20, marginBottom: 8 },
   bubbleAvatarAi: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(255, 255, 255, 0.6)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.8)', alignItems: 'center', justifyContent: 'center' },
   
-  // 🟢 BOARDS & BUTTONS STYLES
-  styleBoardContainer: { marginTop: 8, gap: 15, alignItems: 'center' },
-  boardWrapper: { width: '100%', alignItems: 'center', backgroundColor: 'rgba(255, 255, 255, 0.4)', borderRadius: 16, padding: 10, borderWidth: 1, borderColor: 'rgba(190, 170, 230, 0.3)' },
-  styleBoardImage: { width: 220, height: 160, borderRadius: 12, marginBottom: 12 },
-  boardLinkBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 100, overflow: 'hidden', shadowColor: '#7850B4', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 4 },
-  boardLinkBtnText: { fontSize: 11, fontWeight: '700', color: '#fff', textTransform: 'uppercase', letterSpacing: 0.5 },
+  // 🟢 NEW: BOARDS BUTTON STYLE
+  boardLinkBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 100, overflow: 'hidden', shadowColor: '#7850B4', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 4 },
+  boardLinkBtnText: { fontSize: 12, fontWeight: '700', color: '#fff', textTransform: 'uppercase', letterSpacing: 0.5 },
   
   bubbleTime: { fontSize: 10, color: '#b8aed0', marginTop: 4, paddingHorizontal: 4 },
   typingBubble: { paddingVertical: 14, paddingHorizontal: 18, borderRadius: 18, borderBottomLeftRadius: 5, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(255, 255, 255, 0.6)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.7)' },
