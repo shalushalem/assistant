@@ -1,11 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Image, TouchableOpacity, ScrollView, Modal, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, Image, TouchableOpacity, ScrollView, Modal, ActivityIndicator, StyleSheet, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, Feather } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import { databases, appwriteConfig } from '../lib/appwrite';
 import { useGlobalContext } from '../context/GlobalProvider';
 import { Query } from 'react-native-appwrite';
+
+const { width } = Dimensions.get('window');
 
 // --- HELPER: Identify item types robustly ---
 const getCategoryType = (category = '') => {
@@ -25,7 +29,7 @@ interface WardrobeItem {
   name: string;
   category: string;
   image_url: string;
-  masked_url?: string; // 🟢 Added this so TypeScript knows about the sticker URL
+  masked_url?: string;
 }
 
 const StyleBoardScreen = () => {
@@ -78,19 +82,14 @@ const StyleBoardScreen = () => {
     );
   };
 
-  // --- UPDATED: Smart Shuffle based on broad category ---
   const handleShuffle = () => {
     setIsShuffling(true);
     
     setTimeout(() => {
       const shuffledOutfit = items.map(currentItem => {
-        if (lockedIds.includes(currentItem.$id)) {
-          return currentItem;
-        }
+        if (lockedIds.includes(currentItem.$id)) return currentItem;
 
         const currentType = getCategoryType(currentItem.category);
-        
-        // Find alternatives of the SAME broader type (e.g., any bottom for a bottom)
         const alternatives = fullWardrobe.filter(wardrobeItem => 
           getCategoryType(wardrobeItem.category) === currentType && 
           wardrobeItem.$id !== currentItem.$id
@@ -108,19 +107,14 @@ const StyleBoardScreen = () => {
     }, 400); 
   };
 
-  // --- UPDATED: Navigate to the new Save Style Card screen ---
   const handleSaveBoard = () => {
-    // Grab the IDs of the CURRENT items on the board (accounting for shuffles)
     const currentIds = items.map(item => item.$id).join(',');
-    
-    // Push to the new screen and pass the IDs
     router.push({
       pathname: '/save-style-card', 
       params: { ids: currentIds }
     });
   };
 
-  // --- NEW: Smart Column Distributor ---
   const mainPiece = items.find(item => getCategoryType(item.category) === 'top') || items[0];
   const sideItems = items.filter(item => item.$id !== mainPiece?.$id);
   
@@ -132,57 +126,61 @@ const StyleBoardScreen = () => {
   const accessoryPieces = sideItems.filter(item => getCategoryType(item.category) === 'accessory');
   const leftovers = sideItems.filter(item => item !== bottomPiece && item !== footwearPiece && !accessoryPieces.includes(item));
 
-  // Balance the layout logically
   if (bottomPiece) leftColumnItems.push(bottomPiece);
   if (footwearPiece) rightColumnItems.push(footwearPiece);
   
   if (accessoryPieces.length > 0) leftColumnItems.push(accessoryPieces[0]);
   if (accessoryPieces.length > 1) rightColumnItems.push(accessoryPieces[1]);
 
-  // Fail-safe for any weird backend anomalies
   leftovers.forEach(item => {
     if (leftColumnItems.length <= rightColumnItems.length) leftColumnItems.push(item);
     else rightColumnItems.push(item);
   });
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* HEADER */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={{ padding: 5 }}>
-          <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
+      {/* ── HEADER ── */}
+      <View style={styles.sectionHeader}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
+          <Feather name="chevron-left" size={24} color="#1a1a1a" />
         </TouchableOpacity>
         
-        <Text style={styles.headerTitle}>Style <Text style={{ color: '#FF9C01', fontStyle: 'italic' }}>Board</Text></Text>
+        <Text style={styles.sectionTitle}>Style <Text style={{ fontStyle: 'italic', color: '#b8a8e8' }}>Board</Text></Text>
         
-        <TouchableOpacity style={styles.savedBtn} onPress={() => setIsSavedOpen(true)}>
-          <Text style={styles.savedBtnText}>SAVED</Text>
-          <View style={styles.badge}><Text style={styles.badgeText}>{savedBoards.length}</Text></View>
+        <TouchableOpacity style={styles.btnSecondary} onPress={() => setIsSavedOpen(true)}>
+          <Text style={styles.btnSecondaryText}>Saved</Text>
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>{savedBoards.length}</Text>
+          </View>
         </TouchableOpacity>
       </View>
 
-      {/* MAIN CANVAS */}
+      {/* ── MAIN CANVAS ── */}
       <View style={styles.canvasContainer}>
         {isLoading || isShuffling ? (
-          <ActivityIndicator size="large" color="#FF9C01" />
+          <ActivityIndicator size="large" color="#e07090" />
         ) : items.length === 0 ? (
           <View style={styles.emptyState}>
-            <Ionicons name="sparkles" size={40} color="#CDCDE0" />
-            <Text style={styles.emptyText}>Ahvi couldn't find those items.{'\n'}Try generating a new look.</Text>
+            <Text style={{ fontSize: 40, opacity: 0.5, marginBottom: 10 }}>✨</Text>
+            <Text style={styles.emptyTitle}>No items found</Text>
+            <Text style={styles.emptySub}>Ahvi couldn't find those pieces.{'\n'}Try generating a new look.</Text>
           </View>
         ) : (
-          <ScrollView contentContainerStyle={styles.canvas}>
-            {/* Left Column (Bottoms & Acc 1) */}
+          <ScrollView contentContainerStyle={styles.canvas} showsVerticalScrollIndicator={false}>
+            {/* Left Column */}
             <View style={styles.sideColumn}>
               {leftColumnItems.map(item => (
                 <View key={item.$id} style={styles.sideItem}>
                   <TouchableOpacity activeOpacity={0.8} onPress={() => toggleLock(item.$id)}>
-                    <View style={[styles.sideFrame, lockedIds.includes(item.$id) && styles.lockedBorder]}>
-                      {/* 🟢 FIX: Prioritize masked_url and use contain */}
+                    <View style={[styles.glassCard, styles.sideFrame, lockedIds.includes(item.$id) && styles.lockedBorder]}>
+                      {lockedIds.includes(item.$id) && (
+                        <LinearGradient colors={['#7b6cc8', '#e07090']} style={StyleSheet.absoluteFillObject} opacity={0.1} />
+                      )}
                       <Image source={{ uri: item.masked_url || item.image_url }} style={styles.imageFull} resizeMode="contain" />
                       {lockedIds.includes(item.$id) && (
                         <View style={styles.lockIconOverlay}>
-                          <Ionicons name="lock-closed" size={12} color="#FFFFFF" />
+                          <LinearGradient colors={['#7b6cc8', '#e07090']} style={StyleSheet.absoluteFillObject} />
+                          <Feather name="lock" size={10} color="#fff" />
                         </View>
                       )}
                     </View>
@@ -192,21 +190,26 @@ const StyleBoardScreen = () => {
               ))}
             </View>
 
-            {/* Center Column (Main Piece) */}
+            {/* Center Column */}
             {mainPiece && (
               <View style={styles.centerColumn}>
                 <TouchableOpacity activeOpacity={0.9} onPress={() => toggleLock(mainPiece.$id)} style={styles.centerFrameWrap}>
-                  <View style={[styles.centerFrame, lockedIds.includes(mainPiece.$id) && styles.lockedBorderCenter]}>
-                    {/* 🟢 FIX: Prioritize masked_url and use contain */}
+                  <View style={[styles.glassCard, styles.centerFrame, lockedIds.includes(mainPiece.$id) && styles.lockedBorder]}>
+                    {lockedIds.includes(mainPiece.$id) && (
+                        <LinearGradient colors={['#7b6cc8', '#e07090']} style={StyleSheet.absoluteFillObject} opacity={0.1} />
+                    )}
                     <Image source={{ uri: mainPiece.masked_url || mainPiece.image_url }} style={styles.imageFull} resizeMode="contain" />
                     {lockedIds.includes(mainPiece.$id) && (
-                      <View style={styles.lockIconOverlayCenter}>
-                        <Ionicons name="lock-closed" size={18} color="#FFFFFF" />
+                      <View style={[styles.lockIconOverlay, { width: 26, height: 26, borderRadius: 13, top: 8, right: 8 }]}>
+                        <LinearGradient colors={['#7b6cc8', '#e07090']} style={StyleSheet.absoluteFillObject} />
+                        <Feather name="lock" size={14} color="#fff" />
                       </View>
                     )}
                   </View>
                   <View style={styles.sigBadge}>
-                    <Text style={styles.sigBadgeText}>✦ Main Piece</Text>
+                    <BlurView intensity={80} tint="light" style={styles.sigBadgeBlur}>
+                      <Text style={styles.sigBadgeText}>✦ Main Piece</Text>
+                    </BlurView>
                   </View>
                 </TouchableOpacity>
                 <Text style={styles.centerTag}>{mainPiece.category}</Text>
@@ -214,17 +217,20 @@ const StyleBoardScreen = () => {
               </View>
             )}
 
-            {/* Right Column (Footwear & Acc 2) */}
+            {/* Right Column */}
             <View style={styles.sideColumn}>
               {rightColumnItems.map(item => (
                 <View key={item.$id} style={styles.sideItem}>
                   <TouchableOpacity activeOpacity={0.8} onPress={() => toggleLock(item.$id)}>
-                    <View style={[styles.sideFrame, lockedIds.includes(item.$id) && styles.lockedBorder]}>
-                      {/* 🟢 FIX: Prioritize masked_url and use contain */}
+                    <View style={[styles.glassCard, styles.sideFrame, lockedIds.includes(item.$id) && styles.lockedBorder]}>
+                      {lockedIds.includes(item.$id) && (
+                        <LinearGradient colors={['#7b6cc8', '#e07090']} style={StyleSheet.absoluteFillObject} opacity={0.1} />
+                      )}
                       <Image source={{ uri: item.masked_url || item.image_url }} style={styles.imageFull} resizeMode="contain" />
                       {lockedIds.includes(item.$id) && (
                         <View style={styles.lockIconOverlay}>
-                          <Ionicons name="lock-closed" size={12} color="#FFFFFF" />
+                          <LinearGradient colors={['#7b6cc8', '#e07090']} style={StyleSheet.absoluteFillObject} />
+                          <Feather name="lock" size={10} color="#fff" />
                         </View>
                       )}
                     </View>
@@ -237,38 +243,40 @@ const StyleBoardScreen = () => {
         )}
       </View>
 
-      {/* BOTTOM BAR */}
+      {/* ── BOTTOM BAR ── */}
       <View style={styles.bottomBar}>
         <TouchableOpacity 
-          style={styles.shuffleBtn} 
+          style={[styles.btnSecondary, { paddingHorizontal: 20 }]} 
           onPress={handleShuffle}
           disabled={isLoading || isShuffling || items.length === 0}
         >
-          <Ionicons name="shuffle" size={18} color="#FFFFFF" />
-          <Text style={styles.shuffleText}>Shuffle</Text>
+          <Feather name="shuffle" size={14} color="#6b6b6b" style={{ marginRight: 6 }} />
+          <Text style={styles.btnSecondaryText}>Shuffle</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.saveActionBtn} onPress={handleSaveBoard}>
-          <Text style={styles.saveActionText}>✦ Save Style Card</Text>
+        <TouchableOpacity style={styles.btnPrimary} onPress={handleSaveBoard}>
+          <LinearGradient colors={['#7b6cc8', '#e07090']} style={StyleSheet.absoluteFillObject} />
+          <Feather name="star" size={14} color="#fff" style={{ marginRight: 6 }} />
+          <Text style={styles.btnPrimaryText}>Save Style Card</Text>
         </TouchableOpacity>
       </View>
 
-      {/* SAVED ITEMS MODAL */}
-      <Modal visible={isSavedOpen} animationType="slide" transparent={true}>
+      {/* ── SAVED ITEMS MODAL ── */}
+      <Modal visible={isSavedOpen} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <BlurView intensity={70} tint="light" style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Saved <Text style={{ color: '#FF9C01', fontStyle: 'italic' }}>Items</Text></Text>
-              <TouchableOpacity onPress={() => setIsSavedOpen(false)}>
-                <Ionicons name="close" size={28} color="#CDCDE0" />
+              <Text style={styles.modalTitle}>Saved <Text style={{ fontStyle: 'italic', color: '#b8a8e8' }}>Items</Text></Text>
+              <TouchableOpacity onPress={() => setIsSavedOpen(false)} style={styles.iconBtn}>
+                <Ionicons name="close" size={24} color="#6b6b6b" />
               </TouchableOpacity>
             </View>
             
             <View style={styles.modalBody}>
-              <Ionicons name="sparkles-outline" size={48} color="#CDCDE0" style={{ alignSelf: 'center', opacity: 0.5, marginTop: 100 }} />
-              <Text style={styles.emptyText}>No style cards saved yet.</Text>
+              <Text style={{ fontSize: 40, opacity: 0.5, marginBottom: 10, alignSelf: 'center', marginTop: 80 }}>🔖</Text>
+              <Text style={styles.emptySub}>No style cards saved yet.</Text>
             </View>
-          </View>
+          </BlurView>
         </View>
       </Modal>
     </SafeAreaView>
@@ -278,111 +286,41 @@ const StyleBoardScreen = () => {
 export default StyleBoardScreen;
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#161622' },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    backgroundColor: '#232533',
-    borderBottomWidth: 1,
-    borderBottomColor: '#161622',
-  },
-  headerTitle: { fontSize: 22, fontWeight: 'bold', color: '#FFFFFF' },
-  savedBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#FF9C01',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-  },
-  savedBtnText: { color: '#FF9C01', fontSize: 10, fontWeight: 'bold', marginRight: 6 },
-  badge: { backgroundColor: '#FF9C01', width: 16, height: 16, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  badgeText: { color: '#161622', fontSize: 9, fontWeight: 'bold' },
+  safeArea: { flex: 1, backgroundColor: 'transparent' },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginBottom: 10, marginTop: 10 },
+  sectionTitle: { fontFamily: 'System', fontSize: 28, fontWeight: '300', color: '#1a1a1a' },
+  iconBtn: { padding: 4 },
+  btnSecondary: { flexDirection: 'row', paddingVertical: 10, paddingHorizontal: 16, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.9)', borderRadius: 100, backgroundColor: 'rgba(255, 255, 255, 0.6)', alignItems: 'center', justifyContent: 'center' },
+  btnSecondaryText: { color: '#6b6b6b', fontSize: 10, fontWeight: '600', letterSpacing: 1, textTransform: 'uppercase' },
+  badge: { backgroundColor: 'rgba(123, 108, 200, 0.15)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, marginLeft: 6 },
+  badgeText: { color: '#7b6cc8', fontSize: 9, fontWeight: 'bold' },
   canvasContainer: { flex: 1, justifyContent: 'center' },
-  canvas: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 40,
-    paddingHorizontal: 10,
-    gap: 15,
-  },
-  emptyState: { alignItems: 'center', opacity: 0.6 },
-  emptyText: { color: '#CDCDE0', textAlign: 'center', marginTop: 10, fontSize: 16, fontStyle: 'italic' },
-  sideColumn: { flexDirection: 'column', justifyContent: 'center', gap: 20, width: 90 },
-  sideItem: { alignItems: 'center', gap: 8 },
-  sideFrame: {
-    width: 80, height: 100, borderRadius: 12, backgroundColor: '#FFFFFF', overflow: 'hidden',
-    borderWidth: 2, borderColor: '#232533', position: 'relative'
-  },
-  lockedBorder: {
-    borderColor: '#FF9C01',
-    borderWidth: 3,
-  },
-  lockIconOverlay: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    backgroundColor: 'rgba(255, 156, 1, 0.9)',
-    borderRadius: 10,
-    width: 20,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sideName: { color: '#CDCDE0', fontSize: 10, textTransform: 'uppercase', textAlign: 'center' },
-  centerColumn: { alignItems: 'center', zIndex: 2, paddingHorizontal: 10 },
-  centerFrameWrap: { position: 'relative', marginBottom: 15 },
-  centerFrame: {
-    width: 180, height: 260, borderRadius: 16, backgroundColor: '#FFFFFF', overflow: 'hidden',
-    borderWidth: 3, borderColor: '#FF9C01',
-    shadowColor: '#FF9C01', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.3, shadowRadius: 10,
-    position: 'relative'
-  },
-  lockedBorderCenter: {
-    borderColor: '#FF4C4C', 
-    borderWidth: 4,
-  },
-  lockIconOverlayCenter: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    backgroundColor: 'rgba(255, 156, 1, 0.9)',
-    borderRadius: 14,
-    width: 28,
-    height: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sigBadge: {
-    position: 'absolute', top: -12, alignSelf: 'center', backgroundColor: '#FF9C01',
-    paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12,
-  },
-  sigBadgeText: { color: '#161622', fontSize: 10, fontWeight: 'bold', textTransform: 'uppercase' },
-  centerTag: { color: '#FF9C01', fontSize: 10, textTransform: 'uppercase', marginBottom: 4, fontWeight: 'bold' },
-  centerName: { color: '#FFFFFF', fontSize: 18, fontStyle: 'italic', fontWeight: '600', textAlign: 'center' },
+  canvas: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', paddingVertical: 40, paddingHorizontal: 10, gap: 12 },
+  emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
+  emptyTitle: { fontSize: 22, color: '#1a1a1a', fontWeight: '300', marginBottom: 8 },
+  emptySub: { fontSize: 12, color: '#6b6b6b', textAlign: 'center', maxWidth: 260, lineHeight: 18 },
+  glassCard: { backgroundColor: 'rgba(255, 255, 255, 0.65)', borderRadius: 22, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.9)', overflow: 'hidden', shadowColor: '#7850B4', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 15, elevation: 3 },
+  sideColumn: { flexDirection: 'column', justifyContent: 'center', gap: 16, width: (width * 0.22) },
+  sideItem: { alignItems: 'center', gap: 6 },
+  sideFrame: { width: '100%', aspectRatio: 0.8, position: 'relative' },
+  lockedBorder: { borderColor: '#e07090', borderWidth: 2 },
+  lockIconOverlay: { position: 'absolute', top: 6, right: 6, width: 20, height: 20, borderRadius: 10, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', shadowColor: '#e07090', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4 },
+  sideName: { color: '#6b6b6b', fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.5, textAlign: 'center' },
+  centerColumn: { alignItems: 'center', zIndex: 2, width: (width * 0.45) },
+  centerFrameWrap: { position: 'relative', marginBottom: 15, width: '100%' },
+  centerFrame: { width: '100%', aspectRatio: 0.7, position: 'relative' },
+  sigBadge: { position: 'absolute', top: -12, alignSelf: 'center', borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.8)' },
+  sigBadgeBlur: { paddingHorizontal: 12, paddingVertical: 6, backgroundColor: 'rgba(255, 255, 255, 0.4)' },
+  sigBadgeText: { color: '#1a1a1a', fontSize: 9, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
+  centerTag: { color: '#e07090', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4, fontWeight: '600' },
+  centerName: { color: '#1a1a1a', fontSize: 16, fontWeight: '600', textAlign: 'center' },
   imageFull: { width: '100%', height: '100%' },
-  bottomBar: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 24, paddingVertical: 16, backgroundColor: '#232533', borderTopWidth: 1, borderTopColor: '#161622',
-  },
-  shuffleBtn: { 
-    flexDirection: 'row', alignItems: 'center', backgroundColor: '#3A3D52', 
-    paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, gap: 6 
-  },
-  shuffleText: { color: '#FFFFFF', fontSize: 12, fontWeight: 'bold', textTransform: 'uppercase' },
-  saveActionBtn: { backgroundColor: '#FF9C01', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 24 },
-  saveActionText: { color: '#161622', fontWeight: 'bold', fontSize: 12, textTransform: 'uppercase' },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#161622', height: '85%', borderTopLeftRadius: 24, borderTopRightRadius: 24 },
-  modalHeader: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 24, paddingVertical: 20, borderBottomWidth: 1, borderBottomColor: '#232533',
-  },
-  modalTitle: { fontSize: 22, fontWeight: 'bold', color: '#FFFFFF' },
+  bottomBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, paddingVertical: 20, gap: 12 },
+  btnPrimary: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 100, overflow: 'hidden', shadowColor: '#9680D8', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 5 },
+  btnPrimaryText: { color: '#fff', fontSize: 11, fontWeight: '600', letterSpacing: 1, textTransform: 'uppercase' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(20, 12, 36, 0.4)', justifyContent: 'flex-end' },
+  modalContent: { borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 24, height: '85%', backgroundColor: 'rgba(255, 255, 255, 0.85)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.95)' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  modalTitle: { fontSize: 26, color: '#1a1a1a', fontWeight: '300' },
   modalBody: { flex: 1, padding: 24 },
 });

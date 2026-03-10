@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, Image, TouchableOpacity, ActivityIndicator, StyleSheet, TextInput, ScrollView, Alert } from 'react-native';
+import { View, Text, Image, TouchableOpacity, ActivityIndicator, StyleSheet, TextInput, ScrollView, Alert, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { databases, appwriteConfig, uploadFile } from '../lib/appwrite';
 import { useGlobalContext } from '../context/GlobalProvider';
 import { Query, ID } from 'react-native-appwrite';
 import { captureRef } from 'react-native-view-shot';
+import { LinearGradient } from 'expo-linear-gradient';
+
+const { width } = Dimensions.get('window');
 
 const getCategoryType = (category = '') => {
   const cat = category.toLowerCase();
@@ -88,7 +91,7 @@ const SaveStyleCardScreen = () => {
       // 1. Capture the UI view to an image
       const localUri = await captureRef(viewRef, {
         format: 'jpg',
-        quality: 0.8,
+        quality: 0.9,
       });
 
       // 2. Upload to Appwrite Storage Bucket
@@ -127,51 +130,81 @@ const SaveStyleCardScreen = () => {
   const accessories = items.filter(item => getCategoryType(item.category) === 'accessory');
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={{ padding: 5 }}>
-          <Ionicons name="close" size={28} color="#FFFFFF" />
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
+      {/* ── HEADER ── */}
+      <View style={styles.sectionHeader}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
+          <Feather name="x" size={24} color="#1a1a1a" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Save <Text style={{ color: '#FF9C01', fontStyle: 'italic' }}>Card</Text></Text>
-        <View style={{ width: 30 }} /> 
+        <Text style={styles.sectionTitle}>Save <Text style={{ fontStyle: 'italic', color: '#b8a8e8' }}>Card</Text></Text>
+        <View style={{ width: 32 }} /> {/* Spacer to center the title */}
       </View>
 
       {isLoading ? (
         <View style={styles.centerFlex}>
-          <ActivityIndicator size="large" color="#FF9C01" />
+          <ActivityIndicator size="large" color="#e07090" />
+          <Text style={{ marginTop: 15, color: '#6b6b6b', fontSize: 12 }}>Curating your aesthetic...</Text>
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          
+          <Text style={styles.label}>Style Name</Text>
           <TextInput 
             style={styles.nameInput}
             value={outfitName}
             onChangeText={setOutfitName}
-            placeholder="Name your outfit..."
-            placeholderTextColor="#CDCDE0"
+            placeholder="e.g. Sunday Brunch Look"
+            placeholderTextColor="#a0a0a0"
+            selectionColor="#e07090"
           />
 
-          <View ref={viewRef} style={styles.collageBoard}>
-            <View style={styles.leftCol}>
-              {topItem && (
-                <Image source={{ uri: topItem.masked_url || topItem.image_url }} style={styles.collageMainPiece} resizeMode="contain" />
-              )}
-              {bottomItem && (
-                <Image source={{ uri: bottomItem.masked_url || bottomItem.image_url }} style={styles.collageBottomPiece} resizeMode="contain" />
-              )}
+          {/* ── COLLAGE BOARD (This is what gets captured!) ── */}
+          <View ref={viewRef} style={styles.collageContainer}>
+            {/* The background of the saved image */}
+            <LinearGradient 
+              colors={['#fdfbfb', '#f5f7fa']} 
+              style={StyleSheet.absoluteFillObject} 
+            />
+            
+            {/* Soft decorative blur circle in the background of the image */}
+            <View style={styles.decorativeCircle} />
+
+            <View style={styles.collageBoard}>
+              <View style={styles.leftCol}>
+                {topItem && (
+                  <Image source={{ uri: topItem.masked_url || topItem.image_url }} style={styles.collageMainPiece} resizeMode="contain" />
+                )}
+                {bottomItem && (
+                  <Image source={{ uri: bottomItem.masked_url || bottomItem.image_url }} style={styles.collageBottomPiece} resizeMode="contain" />
+                )}
+              </View>
+
+              <View style={styles.rightCol}>
+                {accessories.map((acc, index) => (
+                  <Image key={index} source={{ uri: acc.masked_url || acc.image_url }} style={styles.collageSmallPiece} resizeMode="contain" />
+                ))}
+                {footwearItem && (
+                  <Image source={{ uri: footwearItem.masked_url || footwearItem.image_url }} style={styles.collageSmallPiece} resizeMode="contain" />
+                )}
+              </View>
             </View>
 
-            <View style={styles.rightCol}>
-              {accessories.map((acc, index) => (
-                <Image key={index} source={{ uri: acc.masked_url || acc.image_url }} style={styles.collageSmallPiece} resizeMode="contain" />
-              ))}
-              {footwearItem && (
-                <Image source={{ uri: footwearItem.masked_url || footwearItem.image_url }} style={styles.collageSmallPiece} resizeMode="contain" />
-              )}
+            {/* A subtle watermark/footer on the saved image */}
+            <View style={styles.cardFooter}>
+               <Text style={styles.cardFooterText}>Curated by Ahvi</Text>
             </View>
           </View>
 
-          <TouchableOpacity style={styles.saveBtn} onPress={handleConfirmSave} disabled={isSaving}>
-            {isSaving ? <ActivityIndicator color="#161622" /> : <Text style={styles.saveBtnText}>Save to Profile</Text>}
+          <TouchableOpacity style={styles.btnPrimary} onPress={handleConfirmSave} disabled={isSaving}>
+            <LinearGradient colors={['#7b6cc8', '#e07090']} style={StyleSheet.absoluteFillObject} />
+            {isSaving ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <>
+                <Feather name="download" size={16} color="#fff" style={{ marginRight: 8 }} />
+                <Text style={styles.btnPrimaryText}>Save to Profile</Text>
+              </>
+            )}
           </TouchableOpacity>
         </ScrollView>
       )}
@@ -182,35 +215,96 @@ const SaveStyleCardScreen = () => {
 export default SaveStyleCardScreen;
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#161622' },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#232533',
-  },
-  headerTitle: { fontSize: 22, fontWeight: 'bold', color: '#FFFFFF' },
+  safeArea: { flex: 1, backgroundColor: 'transparent' },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, marginBottom: 10, marginTop: 10 },
+  sectionTitle: { fontFamily: 'System', fontSize: 28, fontWeight: '300', color: '#1a1a1a' },
+  iconBtn: { padding: 4 },
   centerFlex: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  content: { padding: 20, alignItems: 'center' },
+  content: { padding: 20, alignItems: 'center', paddingBottom: 60 },
   
+  label: { width: '100%', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.2, color: '#6b6b6b', marginBottom: 8, marginLeft: 10 },
   nameInput: {
-    width: '100%', backgroundColor: '#232533', color: '#FFFFFF',
-    fontSize: 20, fontWeight: 'bold', textAlign: 'center', 
-    paddingVertical: 15, borderRadius: 12, marginBottom: 20,
-    borderWidth: 1, borderColor: '#FF9C01'
+    width: '100%',
+    backgroundColor: 'rgba(255, 255, 255, 0.65)',
+    borderWidth: 1,
+    borderColor: 'rgba(190, 170, 230, 0.3)',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderRadius: 16,
+    fontSize: 18,
+    color: '#1a1a1a',
+    fontWeight: '500',
+    textAlign: 'center',
+    marginBottom: 30,
+    shadowColor: '#7850B4',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 5,
   },
 
+  collageContainer: {
+    width: width - 40,
+    height: 480,
+    borderRadius: 24,
+    overflow: 'hidden', // Ensures the gradient and snapshot stay in bounds
+    borderWidth: 1,
+    borderColor: 'rgba(190, 170, 230, 0.2)',
+    shadowColor: '#7850B4',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 5,
+    marginBottom: 30,
+    backgroundColor: '#fff',
+  },
+  decorativeCircle: {
+    position: 'absolute',
+    width: 300,
+    height: 300,
+    borderRadius: 150,
+    backgroundColor: 'rgba(224, 112, 144, 0.05)',
+    top: -50,
+    right: -100,
+  },
   collageBoard: {
-    width: '100%', height: 450, backgroundColor: '#D9DBE0', 
-    borderRadius: 20, flexDirection: 'row', padding: 15,
+    flex: 1,
+    flexDirection: 'row',
+    padding: 15,
+    paddingBottom: 40, // Leave room for watermark
   },
   leftCol: { flex: 6, alignItems: 'center', justifyContent: 'center' },
   rightCol: { flex: 4, alignItems: 'center', justifyContent: 'space-around', paddingLeft: 10 },
   collageMainPiece: { width: '95%', height: '55%', zIndex: 2 },
   collageBottomPiece: { width: '95%', height: '50%', marginTop: -20, zIndex: 1 },
-  collageSmallPiece: { width: '85%', height: 100 },
-
-  saveBtn: {
-    width: '100%', backgroundColor: '#FF9C01', paddingVertical: 16, 
-    borderRadius: 30, alignItems: 'center', marginTop: 30
+  collageSmallPiece: { width: '85%', height: 110 },
+  
+  cardFooter: {
+    position: 'absolute',
+    bottom: 15,
+    width: '100%',
+    alignItems: 'center',
   },
-  saveBtnText: { color: '#161622', fontSize: 16, fontWeight: 'bold', textTransform: 'uppercase' },
+  cardFooterText: {
+    fontSize: 9,
+    textTransform: 'uppercase',
+    letterSpacing: 2,
+    color: '#a0a0a0',
+    fontWeight: '600'
+  },
+
+  btnPrimary: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    borderRadius: 100,
+    overflow: 'hidden',
+    shadowColor: '#9680D8',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.3,
+    shadowRadius: 15,
+    elevation: 5,
+  },
+  btnPrimaryText: { color: '#fff', fontSize: 13, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' },
 });

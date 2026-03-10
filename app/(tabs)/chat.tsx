@@ -10,15 +10,18 @@ import {
   Platform,
   FlatList,
   Keyboard,
-  Animated
+  Animated,
+  Image
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
+import { useRouter } from 'expo-router'; // 🟢 NEW: Import router
 import { useGlobalContext } from '../../context/GlobalProvider';
+import { databases, appwriteConfig } from '../../lib/appwrite'; 
+import { Query } from 'react-native-appwrite'; 
 
-// ── TYPES & MOCK DATA ──
 type Role = 'user' | 'ai' | 'assistant';
 
 interface Message {
@@ -27,6 +30,8 @@ interface Message {
   text: string;
   time: string;
   hasActions?: boolean;
+  images?: string[];
+  boardIds?: string[]; // 🟢 NEW: Store the IDs from Python
 }
 
 const OCCASIONS = [
@@ -46,9 +51,9 @@ const QUICK_PROMPTS = [
 ];
 
 export default function Chat() {
-  const { user } = useGlobalContext(); // Fetch the current user
+  const { user } = useGlobalContext(); 
+  const router = useRouter(); // 🟢 NEW: Initialize router
 
-  // ── STATE ──
   const [activeOccasion, setActiveOccasion] = useState(OCCASIONS[0]);
   const [inputText, setInputText] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -56,12 +61,10 @@ export default function Chat() {
   
   const flatListRef = useRef<FlatList>(null);
   
-  // Typing animation values
   const dot1 = useRef(new Animated.Value(0)).current;
   const dot2 = useRef(new Animated.Value(0)).current;
   const dot3 = useRef(new Animated.Value(0)).current;
 
-  // ── LOGIC ──
   const getTime = () => {
     const d = new Date();
     return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -71,10 +74,7 @@ export default function Chat() {
     const textToSend = textOverride || inputText.trim();
     if (!textToSend) return;
 
-    // 1. Add User Message to UI instantly
     const newUserMsg: Message = { id: Date.now().toString(), role: 'user', text: textToSend, time: getTime() };
-    
-    // Create a new array with the current history to send to the API
     const currentHistory = [...messages, newUserMsg];
     
     setMessages(currentHistory);
@@ -83,16 +83,29 @@ export default function Chat() {
     setIsTyping(true);
 
     try {
-      // 2. Point to the correct endpoint: /api/text
+      let currentWardrobe = [];
+      if (user?.$id) {
+        const response = await databases.listDocuments(
+          appwriteConfig.databaseId!,
+          appwriteConfig.outfitCollectionId!,
+          [Query.equal('user_id', user.$id), Query.limit(50)] 
+        );
+        
+        currentWardrobe = response.documents.map(doc => ({
+          id: doc.$id,
+          name: doc.name,
+          category: doc.category,
+          image_url: doc.masked_url || doc.image_url 
+        }));
+      }
+
       const API_URL = `${process.env.EXPO_PUBLIC_API_BASE_URL}/api/text`;
       
-      // 3. Format the messages array to match the Python `Message` class requirements
       const apiMessages = currentHistory.map(m => ({
-        role: m.role === 'ai' ? 'assistant' : m.role, // Python expects 'assistant', not 'ai'
+        role: m.role === 'ai' ? 'assistant' : m.role, 
         content: m.text
       }));
 
-      // 4. Build the exact payload expected by TextChatRequest in Python
       const payload = {
         messages: apiMessages,
         language: "en",
@@ -101,7 +114,7 @@ export default function Chat() {
           username: user?.name || "Buddy",
           gender: user?.gender || "male"
         },
-        wardrobe_items: [] // In the future, pass Appwrite wardrobe items here
+        wardrobe_items: currentWardrobe 
       };
 
       const response = await fetch(API_URL, {
@@ -112,22 +125,11 @@ export default function Chat() {
         body: JSON.stringify(payload),
       });
 
-      // 5. Advanced Error Logging
-      if (!response.ok) {
-        const errorText = await response.text(); 
-        console.error(`Backend Error (${response.status}):`, errorText);
-        throw new Error(`Server returned ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`Server returned ${response.status}`);
 
       const data = await response.json();
-      
-      // Check if Python caught an internal error (like Ollama being down)
-      if (data.error) {
-         console.error("Python Internal Error:", data.error);
-         throw new Error(data.error);
-      }
+      if (data.error) throw new Error(data.error);
 
-      // 6. Parse the response based on the Python return dictionary
       const aiResponseText = data.message?.content || "I'm having trouble thinking right now.";
       
       const newAiMsg: Message = {
@@ -135,7 +137,9 @@ export default function Chat() {
         role: 'assistant',
         text: aiResponseText,
         time: getTime(),
-        hasActions: data.images && data.images.length > 0 // Show buttons if style boards were generated
+        hasActions: data.images && data.images.length > 0,
+        images: data.images,
+        boardIds: data.board_ids // 🟢 NEW: Save IDs to state
       };
       
       setMessages(prev => [...prev, newAiMsg]);
@@ -145,7 +149,7 @@ export default function Chat() {
       const errorMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        text: "Sorry, I couldn't reach the styling server right now. Please check your connection and the console logs.",
+        text: "Sorry, I couldn't reach the styling server right now.",
         time: getTime(),
         hasActions: false
       };
@@ -155,7 +159,6 @@ export default function Chat() {
     }
   };
 
-  // Typing dots animation loop
   useEffect(() => {
     if (isTyping) {
       const animateDot = (dot: Animated.Value, delay: number) => {
@@ -176,7 +179,6 @@ export default function Chat() {
     }
   }, [isTyping]);
 
-  // ── RENDERERS ──
   const renderMessage = ({ item }: { item: Message }) => {
     const isUser = item.role === 'user';
 
@@ -196,21 +198,34 @@ export default function Chat() {
           ) : (
             <View style={styles.bubbleAiWrap}>
               <BlurView intensity={30} tint="light" style={styles.bubbleAi}>
-                <Text style={styles.bubbleTextAi}>{item.text}</Text>
+                {item.text.length > 0 && <Text style={styles.bubbleTextAi}>{item.text}</Text>}
                 
-                {/* AI Action Buttons */}
-                {item.hasActions && (
-                  <View style={styles.bubbleActions}>
-                    <TouchableOpacity style={styles.bubBtnSave}>
-                      <Feather name="bookmark" size={12} color="#9060d0" />
-                      <Text style={styles.bubBtnSaveText}>Save outfit</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.bubBtnPlan}>
-                      <Feather name="calendar" size={12} color="#e87090" />
-                      <Text style={styles.bubBtnPlanText}>Add to plan</Text>
-                    </TouchableOpacity>
+                {/* 🟢 RENDER BOARDS WITH INTERACTIVE BUTTONS */}
+                {item.images && item.images.length > 0 && (
+                  <View style={styles.styleBoardContainer}>
+                    {item.images.map((base64String, index) => (
+                      <View key={index} style={styles.boardWrapper}>
+                        <Image 
+                          source={{ uri: `data:image/jpeg;base64,${base64String}` }}
+                          style={styles.styleBoardImage}
+                          resizeMode="contain"
+                        />
+                        {item.boardIds && item.boardIds[index] && (
+                          <TouchableOpacity 
+                            style={styles.boardLinkBtn}
+                            // 🟢 NEW: Route to style-board screen and pass the comma separated IDs!
+                            onPress={() => router.push({ pathname: '/style-board', params: { ids: item.boardIds![index] } })}
+                          >
+                            <LinearGradient colors={['#7b6cc8', '#e07090']} style={StyleSheet.absoluteFillObject} start={{x:0, y:0}} end={{x:1, y:1}} />
+                            <Feather name="maximize-2" size={12} color="#fff" />
+                            <Text style={styles.boardLinkBtnText}>Open Style Board</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    ))}
                   </View>
                 )}
+                
               </BlurView>
             </View>
           )}
@@ -233,15 +248,12 @@ export default function Chat() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
-        
-        {/* ── HEADER ── */}
         <View style={styles.header}>
           <Text style={styles.title}>AHVI Chat</Text>
           <View style={styles.titleUnderline} />
           <Text style={styles.subtitle}>Your personal AI styling assistant</Text>
         </View>
 
-        {/* ── OCCASION STRIP ── */}
         <View style={styles.occasionContainer}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.occasionStrip}>
             {OCCASIONS.map((occ) => {
@@ -264,7 +276,6 @@ export default function Chat() {
           </ScrollView>
         </View>
 
-        {/* ── CHAT AREA ── */}
         <FlatList
           ref={flatListRef}
           data={messages}
@@ -309,7 +320,6 @@ export default function Chat() {
           }
         />
 
-        {/* ── INPUT BAR ── */}
         <View style={styles.inputContainer}>
           <BlurView intensity={50} tint="light" style={styles.inputInner}>
             <TextInput
@@ -331,7 +341,6 @@ export default function Chat() {
             </TouchableOpacity>
           </BlurView>
         </View>
-
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -362,19 +371,22 @@ const styles = StyleSheet.create({
   bubbleRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 16, gap: 8 },
   bubbleRowUser: { justifyContent: 'flex-end' },
   bubbleRowAi: { justifyContent: 'flex-start' },
-  bubbleWrap: { maxWidth: '80%' },
+  bubbleWrap: { maxWidth: '82%' }, 
   bubbleUser: { paddingVertical: 11, paddingHorizontal: 15, borderRadius: 18, borderBottomRightRadius: 5, borderWidth: 1, borderColor: 'rgba(180, 140, 220, 0.42)' },
   bubbleTextUser: { fontSize: 13.5, color: '#3a2050', lineHeight: 20 },
   bubbleAvatarUser: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(255, 255, 255, 0.6)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.8)', alignItems: 'center', justifyContent: 'center' },
   bubbleAiWrap: { borderRadius: 18, borderBottomLeftRadius: 5, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.7)' },
   bubbleAi: { paddingVertical: 12, paddingHorizontal: 15, backgroundColor: 'rgba(255, 255, 255, 0.6)' },
-  bubbleTextAi: { fontSize: 13.5, color: '#3a2050', lineHeight: 20 },
+  bubbleTextAi: { fontSize: 13.5, color: '#3a2050', lineHeight: 20, marginBottom: 8 },
   bubbleAvatarAi: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(255, 255, 255, 0.6)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.8)', alignItems: 'center', justifyContent: 'center' },
-  bubbleActions: { flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' },
-  bubBtnSave: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 50, backgroundColor: 'rgba(255, 255, 255, 0.9)', borderWidth: 1, borderColor: 'rgba(160, 122, 208, 0.4)' },
-  bubBtnSaveText: { fontSize: 11, fontWeight: '700', color: '#9060d0' },
-  bubBtnPlan: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 50, backgroundColor: 'rgba(232, 112, 144, 0.15)', borderWidth: 1, borderColor: 'rgba(232, 112, 144, 0.4)' },
-  bubBtnPlanText: { fontSize: 11, fontWeight: '700', color: '#e87090' },
+  
+  // 🟢 BOARDS & BUTTONS STYLES
+  styleBoardContainer: { marginTop: 8, gap: 15, alignItems: 'center' },
+  boardWrapper: { width: '100%', alignItems: 'center', backgroundColor: 'rgba(255, 255, 255, 0.4)', borderRadius: 16, padding: 10, borderWidth: 1, borderColor: 'rgba(190, 170, 230, 0.3)' },
+  styleBoardImage: { width: 220, height: 160, borderRadius: 12, marginBottom: 12 },
+  boardLinkBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 100, overflow: 'hidden', shadowColor: '#7850B4', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 4 },
+  boardLinkBtnText: { fontSize: 11, fontWeight: '700', color: '#fff', textTransform: 'uppercase', letterSpacing: 0.5 },
+  
   bubbleTime: { fontSize: 10, color: '#b8aed0', marginTop: 4, paddingHorizontal: 4 },
   typingBubble: { paddingVertical: 14, paddingHorizontal: 18, borderRadius: 18, borderBottomLeftRadius: 5, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(255, 255, 255, 0.6)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.7)' },
   typingDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#9060d0' },
