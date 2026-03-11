@@ -11,17 +11,18 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 const { width } = Dimensions.get('window');
 
-// 🚀 EXPANDED TO INCLUDE INDIAN ETHNIC WEAR
-const getCategoryType = (category = '', name = '') => {
+// 🚀 DYNAMIC CLASSIFIER: Groups items into Main Apparel vs Side Accessories
+const getCategoryGroup = (category = '', name = '') => {
   const textToSearch = `${category} ${name}`.toLowerCase();
   
-  const tops = ['top', 'shirt', 't-shirt', 'blouse', 'sweater', 'hoodie', 'jacket', 'outer', 'dress', 'kurti', 'coat', 'blazer', 'saree', 'sari', 'lehenga', 'kurta', 'suit'];
-  const bottoms = ['bottom', 'pant', 'jeans', 'skirt', 'short', 'trouser', 'cargo', 'legging', 'sweatpant', 'denim', 'churidar', 'salwar'];
-  const footwears = ['shoe', 'sneaker', 'heel', 'boot', 'sandal', 'footwear', 'flat', 'loafer', 'croc', 'jutti', 'mojari'];
+  const apparelKeywords = [
+    'top', 'shirt', 't-shirt', 'blouse', 'sweater', 'hoodie', 'jacket', 'outer', 
+    'dress', 'kurti', 'coat', 'blazer', 'saree', 'sari', 'lehenga', 'kurta', 'suit', 'gown', 'jumpsuit',
+    'bottom', 'pant', 'jeans', 'skirt', 'short', 'trouser', 'cargo', 'legging', 'sweatpant', 'denim', 'churidar', 'salwar'
+  ];
 
-  if (tops.some(kw => textToSearch.includes(kw))) return 'top';
-  if (bottoms.some(kw => textToSearch.includes(kw))) return 'bottom';
-  if (footwears.some(kw => textToSearch.includes(kw))) return 'footwear';
+  // If it's clothing, it goes in the main left column. Otherwise (shoes, bags, watches), it goes to the right.
+  if (apparelKeywords.some(kw => textToSearch.includes(kw))) return 'apparel';
   return 'accessory';
 };
 
@@ -97,9 +98,10 @@ const StyleBoardScreen = () => {
       const shuffledOutfit = items.map(currentItem => {
         if (lockedIds.includes(currentItem.$id)) return currentItem;
 
-        const currentType = getCategoryType(currentItem.category, currentItem.name);
+        // Shuffle within the same broad group (apparel -> apparel, accessory -> accessory)
+        const currentGroup = getCategoryGroup(currentItem.category, currentItem.name);
         const alternatives = fullWardrobe.filter(wardrobeItem => 
-          getCategoryType(wardrobeItem.category, wardrobeItem.name) === currentType && 
+          getCategoryGroup(wardrobeItem.category, wardrobeItem.name) === currentGroup && 
           wardrobeItem.$id !== currentItem.$id
         );
 
@@ -154,17 +156,16 @@ const StyleBoardScreen = () => {
     }, 150);
   };
 
-  const topItem = items.find(item => getCategoryType(item.category, item.name) === 'top');
-  const bottomItem = items.find(item => getCategoryType(item.category, item.name) === 'bottom');
-  const footwearItem = items.find(item => getCategoryType(item.category, item.name) === 'footwear');
-  const accessories = items.filter(item => getCategoryType(item.category, item.name) === 'accessory');
+  // 🚀 DYNAMIC FILTERING: No more `.find()`, we use `.filter()` to capture ALL items sent!
+  const apparelItems = items.filter(item => getCategoryGroup(item.category, item.name) === 'apparel');
+  const accessoryAndFootwearItems = items.filter(item => getCategoryGroup(item.category, item.name) === 'accessory');
 
-  const renderLockableItem = (item: WardrobeItem | undefined, containerStyle: any) => {
-    if (!item) return null;
+  const renderLockableItem = (item: WardrobeItem, containerStyle: any) => {
     const isLocked = lockedIds.includes(item.$id);
     
     return (
       <TouchableOpacity 
+        key={item.$id}
         activeOpacity={0.8} 
         onPress={() => toggleLock(item.$id)} 
         style={[containerStyle, isLocked && !isSaving ? styles.lockedBorder : null]}
@@ -214,19 +215,17 @@ const StyleBoardScreen = () => {
             <View style={styles.decorativeCircle} />
 
             <View style={styles.collageBoard}>
+              
+              {/* 🚀 DYNAMIC LEFT COLUMN: Maps all apparel, naturally distributing vertical height */}
               <View style={styles.leftCol}>
-                {renderLockableItem(topItem, styles.collageMainPiece)}
-                {renderLockableItem(bottomItem, styles.collageBottomPiece)}
+                {apparelItems.map((item) => renderLockableItem(item, styles.dynamicMainPiece))}
               </View>
 
+              {/* 🚀 DYNAMIC RIGHT COLUMN: Maps all footwear and accessories */}
               <View style={styles.rightCol}>
-                {accessories.map((acc, index) => (
-                  <React.Fragment key={index}>
-                    {renderLockableItem(acc, styles.collageSmallPiece)}
-                  </React.Fragment>
-                ))}
-                {renderLockableItem(footwearItem, styles.collageSmallPiece)}
+                {accessoryAndFootwearItems.map((item) => renderLockableItem(item, styles.collageSmallPiece))}
               </View>
+
             </View>
 
             <View style={styles.cardFooter}>
@@ -289,8 +288,9 @@ const styles = StyleSheet.create({
   rightCol: { flex: 4, alignItems: 'center', justifyContent: 'center', paddingLeft: 10, gap: 15 },
   
   imageFull: { width: '100%', height: '100%', zIndex: 2 },
-  collageMainPiece: { flex: 1, width: '100%', position: 'relative' },
-  collageBottomPiece: { flex: 1, width: '100%', position: 'relative' },
+  
+  // 🚀 KEY CHANGE HERE: We use `flex: 1` so it dynamically shares the column space!
+  dynamicMainPiece: { flex: 1, width: '100%', position: 'relative', marginVertical: 5 },
   collageSmallPiece: { width: '90%', height: 100, position: 'relative' },
   
   lockedBorder: { borderColor: '#e07090', borderWidth: 2, borderRadius: 12, backgroundColor: 'rgba(224, 112, 144, 0.05)' },
