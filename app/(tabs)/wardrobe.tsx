@@ -34,12 +34,15 @@ const { databaseId, outfitCollectionId } = appwriteConfig;
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
 const BG_REMOVE_ENDPOINT = `${API_BASE_URL}/api/remove-bg`;
+const VISION_ANALYZE_ENDPOINT = `${API_BASE_URL}/api/analyze-image`;
 
 type OutfitItem = Models.Document & {
   name: string;
   category: string;
   sub_category?: string;
   color_code?: string;
+  occasions?: string[];
+  pattern?: string;
   image_url: string;
   user_id: string;
   status: string;
@@ -78,6 +81,8 @@ export default function Wardrobe() {
   const [newItemCategory, setNewItemCategory] = useState('Tops');
   const [newItemSubCategory, setNewItemSubCategory] = useState('');
   const [newItemColorCode, setNewItemColorCode] = useState('');
+  const [newItemOccasions, setNewItemOccasions] = useState<string[]>([]);
+  const [newItemPattern, setNewItemPattern] = useState('');
   
   const [newItemImages, setNewItemImages] = useState<ProcessedImage[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -216,24 +221,12 @@ export default function Wardrobe() {
       setNewItemImages(processedList);
 
       if (processedList.length > 0) {
-        const formData = new FormData();
-        const targetUri = processedList[0].processedUri;
+        const targetBase64 = processedList[0].processedBase64;
 
-        if (Platform.OS === 'web') {
-          const response = await fetch(targetUri);
-          const blob = await response.blob();
-          formData.append('image_file', blob, 'garment.png');
-        } else {
-          formData.append('image_file', {
-            uri: targetUri,
-            name: 'garment.png',
-            type: 'image/png',
-          } as any);
-        }
-
-        const analyzeRes = await fetch(`${API_BASE_URL}/garment/analyze/`, {
+        const analyzeRes = await fetch(VISION_ANALYZE_ENDPOINT, {
           method: 'POST',
-          body: formData, 
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image_base64: targetBase64 }), 
         });
 
         if (!analyzeRes.ok) {
@@ -244,21 +237,28 @@ export default function Wardrobe() {
         
         const analyzeData = await analyzeRes.json();
 
-        // ⚡ Populates from CLIP instantly, or Ollama Vision if confidence was low
-        if (analyzeData.item_name) {
-          setNewItemName(analyzeData.item_name);
-        }
+        setNewItemName(analyzeData.name || 'New Garment');
         
         if (analyzeData.sub_category) {
           const formattedSub = analyzeData.sub_category.charAt(0).toUpperCase() + analyzeData.sub_category.slice(1);
           setNewItemSubCategory(formattedSub);
         }
 
-        setNewItemCategory(analyzeData.app_category || 'Tops');
+        // 🛡️ Format the category to ensure it matches our exact Title Case array
+        let rawCategory = analyzeData.category || 'Tops';
+        let formattedCategory = rawCategory.charAt(0).toUpperCase() + rawCategory.slice(1).toLowerCase();
 
-        if (analyzeData.dominant_color_hex) {
-          setNewItemColorCode(analyzeData.dominant_color_hex);
-        }
+        // Map common AI mistakes to our exact categories
+        if (formattedCategory === 'Dress' || formattedCategory === 'One-piece') formattedCategory = 'Dresses';
+        if (formattedCategory === 'Top') formattedCategory = 'Tops';
+        if (formattedCategory === 'Bottom') formattedCategory = 'Bottoms';
+        if (formattedCategory === 'Shoe' || formattedCategory === 'Shoes') formattedCategory = 'Footwear';
+
+        setNewItemCategory(CATEGORIES.includes(formattedCategory) ? formattedCategory : 'Tops');
+
+        setNewItemColorCode(analyzeData.color_code || '#000000');
+        setNewItemPattern(analyzeData.pattern || 'plain');
+        setNewItemOccasions(analyzeData.occasions || ['casual']);
       }
 
     } catch (error) {
@@ -312,12 +312,14 @@ export default function Wardrobe() {
           category: newItemCategory, 
           sub_category: newItemSubCategory,
           color_code: newItemColorCode,
+          occasions: newItemOccasions,
+          pattern: newItemPattern,
           image_url: rawImageUrl, 
           image_id: uniqueId, 
           masked_url: wardrobeImageUrl, 
           masked_id: `${uniqueId}_processed`, 
           user_id: user?.$id, 
-          status: 'ready'             
+          status: 'ready'            
         });
       }
 
@@ -327,6 +329,8 @@ export default function Wardrobe() {
       setNewItemName('');
       setNewItemSubCategory('');
       setNewItemColorCode('');
+      setNewItemPattern('');
+      setNewItemOccasions([]);
       onRefresh();
     } catch (error: any) {
       console.error("Upload/Database Error: ", error);
@@ -613,6 +617,18 @@ export default function Wardrobe() {
               </View>
 
               <View style={styles.field}>
+                <Text style={styles.label}>Category *</Text>
+                <View style={styles.occChips}>
+                  {CATEGORIES.slice(1).map(cat => (
+                    <TouchableOpacity key={cat} style={[styles.occChip, newItemCategory === cat && styles.occChipActive]} onPress={() => setNewItemCategory(cat)} disabled={analyzingImage}>
+                      {newItemCategory === cat && <LinearGradient colors={['#7b6cc8', '#e07090']} style={StyleSheet.absoluteFillObject} />}
+                      <Text style={[styles.occChipText, newItemCategory === cat && styles.occChipTextActive]}>{cat}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              <View style={styles.field}>
                 <Text style={styles.label}>Sub Category</Text>
                 <TextInput 
                   style={styles.input} 
@@ -620,6 +636,30 @@ export default function Wardrobe() {
                   placeholderTextColor="#a0a0a0" 
                   value={newItemSubCategory} 
                   onChangeText={setNewItemSubCategory} 
+                  editable={!analyzingImage} 
+                />
+              </View>
+
+              <View style={styles.field}>
+                <Text style={styles.label}>Pattern</Text>
+                <TextInput 
+                  style={styles.input} 
+                  placeholder="e.g. striped, floral, solid" 
+                  placeholderTextColor="#a0a0a0" 
+                  value={newItemPattern} 
+                  onChangeText={setNewItemPattern} 
+                  editable={!analyzingImage} 
+                />
+              </View>
+
+              <View style={styles.field}>
+                <Text style={styles.label}>Occasions</Text>
+                <TextInput 
+                  style={styles.input} 
+                  placeholder="e.g. casual, night out, office" 
+                  placeholderTextColor="#a0a0a0" 
+                  value={newItemOccasions.join(', ')} 
+                  onChangeText={(text) => setNewItemOccasions(text.split(',').map(s => s.trim()))} 
                   editable={!analyzingImage} 
                 />
               </View>
@@ -633,18 +673,6 @@ export default function Wardrobe() {
                   value={newItemColorCode} 
                   editable={false} 
                 />
-              </View>
-
-              <View style={styles.field}>
-                <Text style={styles.label}>Category *</Text>
-                <View style={styles.occChips}>
-                  {CATEGORIES.slice(1).map(cat => (
-                    <TouchableOpacity key={cat} style={[styles.occChip, newItemCategory === cat && styles.occChipActive]} onPress={() => setNewItemCategory(cat)} disabled={analyzingImage}>
-                      {newItemCategory === cat && <LinearGradient colors={['#7b6cc8', '#e07090']} style={StyleSheet.absoluteFillObject} />}
-                      <Text style={[styles.occChipText, newItemCategory === cat && styles.occChipTextActive]}>{cat}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
               </View>
 
               {/* Footer Actions */}

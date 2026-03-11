@@ -31,7 +31,8 @@ interface Message {
   time: string;
   hasActions?: boolean;
   images?: string[];
-  boardIds?: string; // 🟢 Now a single string of comma-separated IDs!
+  boardIds?: string; 
+  chips?: string[]; // 🟢 Added chips array to the Message interface
 }
 
 const OCCASIONS = [
@@ -128,18 +129,36 @@ export default function Chat() {
       if (!response.ok) throw new Error(`Server returned ${response.status}`);
 
       const data = await response.json();
-      if (data.error) throw new Error(data.error);
+      
+      // 🟢 PARSING LOGIC: Extract tags from the raw text
+      let rawText = data.message?.content || "I'm having trouble thinking right now.";
+      let cleanText = rawText;
+      let extractedChips: string[] = [];
+      let extractedBoardData = data.board_ids || null; // Fallback to structured JSON if it exists
 
-      const aiResponseText = data.message?.content || "I'm having trouble thinking right now.";
+      // Extract [CHIPS: ...]
+      const chipsMatch = rawText.match(/\[CHIPS:\s*(.*?)\]/);
+      if (chipsMatch) {
+        extractedChips = chipsMatch[1].split(',').map((c: string) => c.trim());
+        cleanText = cleanText.replace(chipsMatch[0], '').trim();
+      }
+
+      // Extract [STYLE_BOARD: ...]
+      const boardMatch = rawText.match(/\[STYLE_BOARD:\s*(.*?)\]/);
+      if (boardMatch) {
+        extractedBoardData = boardMatch[1];
+        cleanText = cleanText.replace(boardMatch[0], '').trim();
+      }
       
       const newAiMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        text: aiResponseText,
+        text: cleanText, // The text without the ugly bracket tags
         time: getTime(),
-        hasActions: !!data.board_ids || (data.images && data.images.length > 0),
+        hasActions: !!extractedBoardData || (data.images && data.images.length > 0),
         images: data.images,
-        boardIds: data.board_ids // 🟢 Save the string to state
+        boardIds: extractedBoardData, 
+        chips: extractedChips // Store the extracted chips
       };
       
       setMessages(prev => [...prev, newAiMsg]);
@@ -200,6 +219,21 @@ export default function Chat() {
               <BlurView intensity={30} tint="light" style={styles.bubbleAi}>
                 {item.text.length > 0 && <Text style={styles.bubbleTextAi}>{item.text}</Text>}
                 
+                {/* 🟢 RENDER DYNAMIC CHIPS IF VAGUE INTENT */}
+                {item.chips && item.chips.length > 0 && (
+                  <View style={styles.dynamicChipsWrap}>
+                    {item.chips.map((chip, idx) => (
+                      <TouchableOpacity 
+                        key={idx} 
+                        style={styles.dynamicChip} 
+                        onPress={() => handleSend(chip)}
+                      >
+                        <Text style={styles.dynamicChipText}>{chip}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+
                 {/* 🟢 RENDER THE VIEW STYLE BOARD BUTTON */}
                 {item.boardIds ? (
                   <View style={{ marginTop: 8 }}>
@@ -368,7 +402,11 @@ const styles = StyleSheet.create({
   bubbleTextAi: { fontSize: 13.5, color: '#3a2050', lineHeight: 20, marginBottom: 8 },
   bubbleAvatarAi: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(255, 255, 255, 0.6)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.8)', alignItems: 'center', justifyContent: 'center' },
   
-  // 🟢 NEW: BOARDS BUTTON STYLE
+  // 🟢 NEW: DYNAMIC CHIPS STYLES
+  dynamicChipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4, marginBottom: 4 },
+  dynamicChip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, backgroundColor: 'rgba(144, 96, 208, 0.12)', borderWidth: 1, borderColor: 'rgba(144, 96, 208, 0.25)' },
+  dynamicChipText: { fontSize: 11, fontWeight: '600', color: '#7b6cc8' },
+
   boardLinkBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 100, overflow: 'hidden', shadowColor: '#7850B4', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 4 },
   boardLinkBtnText: { fontSize: 12, fontWeight: '700', color: '#fff', textTransform: 'uppercase', letterSpacing: 0.5 },
   
