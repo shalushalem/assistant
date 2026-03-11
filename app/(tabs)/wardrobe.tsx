@@ -1,6 +1,6 @@
 import { Ionicons, Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -15,7 +15,8 @@ import {
   TouchableOpacity,
   View,
   Dimensions,
-  TouchableWithoutFeedback
+  TouchableWithoutFeedback,
+  Platform
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Models, Query, ID } from 'react-native-appwrite';
@@ -31,15 +32,14 @@ const { width, height } = Dimensions.get('window');
 
 const { databaseId, outfitCollectionId } = appwriteConfig;
 
-// USE ENV VARIABLE INSTEAD OF HARDCODED IP
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
-const AI_ANALYZE_ENDPOINT = `${API_BASE_URL}/api/analyze-image`;
 const BG_REMOVE_ENDPOINT = `${API_BASE_URL}/api/remove-bg`;
 
 type OutfitItem = Models.Document & {
   name: string;
   category: string;
-  tags: string[];
+  sub_category?: string;
+  color_code?: string;
   image_url: string;
   user_id: string;
   status: string;
@@ -47,6 +47,12 @@ type OutfitItem = Models.Document & {
   masked_url?: string; 
   masked_id?: string;
   worn?: number;
+};
+
+type ProcessedImage = {
+  rawAsset: ImagePicker.ImagePickerAsset;
+  processedUri: string;
+  processedBase64: string;
 };
 
 const CATEGORIES = ['All', 'Tops', 'Bottoms', 'Footwear', 'Outerwear', 'Accessories', 'Dresses'];
@@ -70,8 +76,10 @@ export default function Wardrobe() {
 
   const [newItemName, setNewItemName] = useState('');
   const [newItemCategory, setNewItemCategory] = useState('Tops');
-  const [newItemTags, setNewItemTags] = useState('');
-  const [newItemImages, setNewItemImages] = useState<ImagePicker.ImagePickerAsset[]>([]);
+  const [newItemSubCategory, setNewItemSubCategory] = useState('');
+  const [newItemColorCode, setNewItemColorCode] = useState('');
+  
+  const [newItemImages, setNewItemImages] = useState<ProcessedImage[]>([]);
   const [uploading, setUploading] = useState(false);
   const [analyzingImage, setAnalyzingImage] = useState(false);
 
@@ -147,38 +155,115 @@ export default function Wardrobe() {
       }
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        setNewItemImages(result.assets);
-        analyzeImageWithAI(result.assets[0]);
+        processAndAnalyzeImages(result.assets);
       }
     } catch (error) {
       Alert.alert('Error', 'Could not select image.');
     }
   };
 
-  const analyzeImageWithAI = async (asset: ImagePicker.ImagePickerAsset) => {
-    if (!asset) return; 
+  const processAndAnalyzeImages = async (assets: ImagePicker.ImagePickerAsset[]) => {
     setAnalyzingImage(true);
     try {
-      let base64Image = asset.base64;
-      if (!base64Image && asset.uri) {
-        base64Image = await FileSystem.readAsStringAsync(asset.uri, { encoding: 'base64' });
-      }
-      if (!base64Image) throw new Error("Could not get image data.");
+      const processedList: ProcessedImage[] = [];
 
-      const response = await fetch(AI_ANALYZE_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_base64: base64Image }),
-      });
+      for (const asset of assets) {
+        let base64Image = asset.base64;
+        
+        if (!base64Image && asset.uri) {
+          if (Platform.OS === 'web') {
+            const response = await fetch(asset.uri);
+            const blob = await response.blob();
+            base64Image = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve((reader.result as string).split(',')[1]);
+              reader.onerror = reject;
+              reader.readAsDataURL(blob);
+            });
+          } else {
+            base64Image = await FileSystem.readAsStringAsync(asset.uri, { encoding: 'base64' });
+          }
+        }
+        
+        if (!base64Image) throw new Error("Could not extract base64 from image.");
 
-      const data = await response.json();
-      if (data && data.name) {
-        setNewItemName(data.name);
-        if (CATEGORIES.includes(data.category)) setNewItemCategory(data.category);
-        if (data.tags && Array.isArray(data.tags)) setNewItemTags(data.tags.join(', '));
+        const bgResponse = await fetch(BG_REMOVE_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image_base64: base64Image }),
+        });
+        
+        const bgData = await bgResponse.json();
+        
+        if (!bgData || !bgData.image_base64) throw new Error(bgData?.detail || "Failed to remove background.");
+
+        let processedUri = '';
+        if (Platform.OS === 'web') {
+          processedUri = `data:image/png;base64,${bgData.image_base64}`;
+        } else {
+          const uniqueId = ID.unique();
+          processedUri = FileSystem.cacheDirectory + `processed_${uniqueId}.png`;
+          await FileSystem.writeAsStringAsync(processedUri, bgData.image_base64, { encoding: 'base64' });
+        }
+
+        processedList.push({ 
+          rawAsset: asset, 
+          processedUri, 
+          processedBase64: bgData.image_base64 
+        });
       }
+
+      setNewItemImages(processedList);
+
+      if (processedList.length > 0) {
+        const formData = new FormData();
+        const targetUri = processedList[0].processedUri;
+
+        if (Platform.OS === 'web') {
+          const response = await fetch(targetUri);
+          const blob = await response.blob();
+          formData.append('image_file', blob, 'garment.png');
+        } else {
+          formData.append('image_file', {
+            uri: targetUri,
+            name: 'garment.png',
+            type: 'image/png',
+          } as any);
+        }
+
+        const analyzeRes = await fetch(`${API_BASE_URL}/garment/analyze/`, {
+          method: 'POST',
+          body: formData, 
+        });
+
+        if (!analyzeRes.ok) {
+          const errText = await analyzeRes.text();
+          console.error("Backend Error Response:", errText);
+          throw new Error("Garment detection failed.");
+        }
+        
+        const analyzeData = await analyzeRes.json();
+
+        // ⚡ Populates from CLIP instantly, or Ollama Vision if confidence was low
+        if (analyzeData.item_name) {
+          setNewItemName(analyzeData.item_name);
+        }
+        
+        if (analyzeData.sub_category) {
+          const formattedSub = analyzeData.sub_category.charAt(0).toUpperCase() + analyzeData.sub_category.slice(1);
+          setNewItemSubCategory(formattedSub);
+        }
+
+        setNewItemCategory(analyzeData.app_category || 'Tops');
+
+        if (analyzeData.dominant_color_hex) {
+          setNewItemColorCode(analyzeData.dominant_color_hex);
+        }
+      }
+
     } catch (error) {
-      console.error("AI Analysis Failed:", error);
+      console.error("AI Pipeline Failed:", error);
+      Alert.alert("Processing Failed", "Could not process or analyze the image.");
     } finally {
       setAnalyzingImage(false);
     }
@@ -207,45 +292,32 @@ export default function Wardrobe() {
   };
 
   const handleAddItem = async () => {
-    if (newItemImages.length === 0 || !newItemName) {
-      Alert.alert('Missing Fields', 'Please add at least one image and a name.');
+    if (newItemImages.length === 0 || !newItemName || !newItemCategory) {
+      Alert.alert('Missing Fields', 'Please add an image, name, and category.');
       return;
     }
 
     setUploading(true);
     try {
-      const tagsArray = newItemTags ? newItemTags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0) : [];
-
-      for (const imageAsset of newItemImages) {
-        if (!imageAsset) continue; 
+      for (const item of newItemImages) {
         const uniqueId = ID.unique();
-        const rawImageUrl = await uploadFile(imageAsset.uri, 'image', 'raw');
-
-        let base64Image = imageAsset.base64;
-        if (!base64Image && imageAsset.uri) {
-          base64Image = await FileSystem.readAsStringAsync(imageAsset.uri, { encoding: 'base64' });
-        }
-        if (!base64Image) throw new Error("Could not read image base64 data.");
-
-        const bgResponse = await fetch(BG_REMOVE_ENDPOINT, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image_base64: base64Image }),
-        });
         
-        const bgData = await bgResponse.json();
-        if (!bgData || !bgData.processed_image_base64) throw new Error(bgData?.error || "Failed to remove background.");
+        const rawImageUrl = await uploadFile(item.rawAsset.uri, 'image', 'raw');
+        const wardrobeImageUrl = await uploadFile(item.processedUri, 'image', 'wardrobe');
 
-        const processedUri = FileSystem.cacheDirectory + `processed_${uniqueId}.png`;
-        await FileSystem.writeAsStringAsync(processedUri, bgData.processed_image_base64, { encoding: 'base64' });
-
-        const wardrobeImageUrl = await uploadFile(processedUri, 'image', 'wardrobe');
         if (!wardrobeImageUrl || !rawImageUrl) throw new Error("Failed to upload images to R2.");
 
         await databases.createDocument(databaseId!, outfitCollectionId!, uniqueId, {
-          name: newItemName, category: newItemCategory, tags: tagsArray,             
-          image_url: rawImageUrl, image_id: uniqueId, masked_url: wardrobeImageUrl, 
-          masked_id: `${uniqueId}_processed`, user_id: user?.$id, status: 'ready'             
+          name: newItemName, 
+          category: newItemCategory, 
+          sub_category: newItemSubCategory,
+          color_code: newItemColorCode,
+          image_url: rawImageUrl, 
+          image_id: uniqueId, 
+          masked_url: wardrobeImageUrl, 
+          masked_id: `${uniqueId}_processed`, 
+          user_id: user?.$id, 
+          status: 'ready'             
         });
       }
 
@@ -253,7 +325,8 @@ export default function Wardrobe() {
       setIsModalVisible(false);
       setNewItemImages([]);
       setNewItemName('');
-      setNewItemTags('');
+      setNewItemSubCategory('');
+      setNewItemColorCode('');
       onRefresh();
     } catch (error: any) {
       console.error("Upload/Database Error: ", error);
@@ -506,7 +579,11 @@ export default function Wardrobe() {
                 {newItemImages.length > 0 && (
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 15 }}>
                     {newItemImages.map((img, index) => (
-                      <Image key={index} source={{ uri: img.uri }} style={[styles.previewImage, { marginRight: 10 }]} />
+                      <Image 
+                        key={index} 
+                        source={{ uri: img.processedUri }} 
+                        style={[styles.previewImage, { marginRight: 10 }]} 
+                      />
                     ))}
                   </ScrollView>
                 )}
@@ -525,19 +602,37 @@ export default function Wardrobe() {
               {analyzingImage && (
                 <View style={styles.loadingRow}>
                   <ActivityIndicator color="#e07090" size="small" style={{ marginRight: 10 }} />
-                  <Text style={{ color: '#e07090', fontSize: 12 }}>Ahvi is analyzing your item...</Text>
+                  <Text style={{ color: '#e07090', fontSize: 12 }}>Ahvi is processing & analyzing...</Text>
                 </View>
               )}
 
               {/* Form Inputs */}
               <View style={styles.field}>
                 <Text style={styles.label}>Item Name *</Text>
-                <TextInput style={styles.input} placeholder="e.g. White linen shirt" placeholderTextColor="#a0a0a0" value={newItemName} onChangeText={setNewItemName} editable={!analyzingImage} />
+                <TextInput style={styles.input} placeholder="e.g. Navy Textured Blazer" placeholderTextColor="#a0a0a0" value={newItemName} onChangeText={setNewItemName} editable={!analyzingImage} />
               </View>
 
               <View style={styles.field}>
-                <Text style={styles.label}>Tags (Comma separated)</Text>
-                <TextInput style={styles.input} placeholder="e.g. summer, casual, cotton" placeholderTextColor="#a0a0a0" value={newItemTags} onChangeText={setNewItemTags} editable={!analyzingImage} />
+                <Text style={styles.label}>Sub Category</Text>
+                <TextInput 
+                  style={styles.input} 
+                  placeholder="e.g. Blazer, Jeans" 
+                  placeholderTextColor="#a0a0a0" 
+                  value={newItemSubCategory} 
+                  onChangeText={setNewItemSubCategory} 
+                  editable={!analyzingImage} 
+                />
+              </View>
+
+              <View style={styles.field}>
+                <Text style={styles.label}>Color Code</Text>
+                <TextInput 
+                  style={[styles.input, { backgroundColor: 'rgba(230, 230, 230, 0.4)', color: '#6b6b6b' }]} 
+                  placeholder="e.g. #ffffff" 
+                  placeholderTextColor="#a0a0a0" 
+                  value={newItemColorCode} 
+                  editable={false} 
+                />
               </View>
 
               <View style={styles.field}>
@@ -610,7 +705,7 @@ const styles = StyleSheet.create({
   field: { marginBottom: 20 },
   label: { fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.2, color: '#6b6b6b', marginBottom: 8 },
   input: { backgroundColor: 'rgba(255, 255, 255, 0.65)', borderWidth: 1, borderColor: 'rgba(190, 170, 230, 0.3)', padding: 14, borderRadius: 14, fontSize: 14, color: '#1a1a1a' },
-  previewImage: { width: 120, height: 120, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(190, 170, 230, 0.3)' },
+  previewImage: { width: 120, height: 120, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(190, 170, 230, 0.3)', backgroundColor: '#f0f0f0' },
   uploadSourceRow: { flexDirection: 'row', gap: 10 },
   uploadSourceBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 12, backgroundColor: 'rgba(255, 255, 255, 0.65)', borderWidth: 1, borderColor: 'rgba(190, 170, 230, 0.3)', borderRadius: 14 },
   uploadSourceText: { fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: '#6b6b6b', fontWeight: '500' },

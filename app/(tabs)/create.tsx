@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,10 +7,10 @@ import {
   ScrollView,
   Dimensions,
   Animated,
-  LayoutAnimation,
-  Platform,
   Modal,
-  TextInput
+  TextInput,
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
@@ -32,6 +32,12 @@ export default function Boards() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
   
+  // ── PACKING ENGINE STATE ──
+  const [isPackingModalVisible, setIsPackingModalVisible] = useState(false);
+  const [packingForm, setPackingForm] = useState({ destination: '', days: '3', weather: '', events: '' });
+  const [packingLoading, setPackingLoading] = useState(false);
+  const [packingResult, setPackingResult] = useState<Record<string, string[]> | null>(null);
+
   // Animation for calendar drop-down
   const calendarAnim = useRef(new Animated.Value(0)).current;
 
@@ -52,15 +58,12 @@ export default function Boards() {
     setCurrentDate(new Date(newDate));
   };
 
-  // Generate days for the selected month
   const getDaysInMonth = () => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
     const daysCount = new Date(year, month + 1, 0).getDate();
     const days = [];
     
-    // For simplicity, showing 1st to end of month. 
-    // (You can enhance this later to start from 'today' like your web version)
     for (let i = 1; i <= daysCount; i++) {
       const date = new Date(year, month, i);
       days.push({
@@ -72,6 +75,36 @@ export default function Boards() {
       });
     }
     return days;
+  };
+
+  // ⚡ THE PACKING ENGINE API CALL
+  const handleGeneratePacking = async () => {
+    if (!packingForm.destination || !packingForm.weather) {
+      Alert.alert("Missing Info", "Please enter at least a destination and weather vibe.");
+      return;
+    }
+    setPackingLoading(true);
+    try {
+      const response = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/packing/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          destination: packingForm.destination,
+          duration_days: parseInt(packingForm.days) || 3,
+          weather: packingForm.weather,
+          events: packingForm.events || "casual sightseeing"
+        }),
+      });
+
+      if (!response.ok) throw new Error("Failed to generate packing list.");
+      const data = await response.json();
+      setPackingResult(data);
+    } catch (error) {
+      console.error("Packing Engine Error:", error);
+      Alert.alert("Error", "Ahvi couldn't generate the packing list right now.");
+    } finally {
+      setPackingLoading(false);
+    }
   };
 
   // ── RENDER ──
@@ -279,362 +312,195 @@ export default function Boards() {
                 <View style={styles.vcardArrow}><Feather name="chevron-right" size={12} color="#6b6b6b" /></View>
               </TouchableOpacity>
 
-              <TouchableOpacity style={[styles.vcard, { width: '100%' }]}>
+              {/* ✈️ THE NEW VACATION / PACKING TRIGGER */}
+              <TouchableOpacity style={[styles.vcard, { width: '100%' }]} onPress={() => setIsPackingModalVisible(true)}>
                 <LinearGradient colors={['rgba(190, 240, 225, 0.65)', 'rgba(170, 230, 215, 0.45)']} style={StyleSheet.absoluteFillObject} />
                 <View style={styles.vcardHeader}>
                   <Ionicons name="airplane-outline" size={28} color="#1a1a1a" />
-                  <View style={styles.vcardBadge}><Text style={styles.vcardBadgeText}>6</Text></View>
+                  <View style={styles.vcardBadge}><Text style={styles.vcardBadgeText}>AI</Text></View>
                 </View>
                 <Text style={styles.vcardTitle}>Vacation</Text>
-                <Text style={styles.vcardSub}>Travel outfits for every destination</Text>
+                <Text style={styles.vcardSub}>AI-Powered Packing Lists</Text>
                 <View style={styles.vcardArrow}><Feather name="chevron-right" size={12} color="#6b6b6b" /></View>
               </TouchableOpacity>
 
             </View>
           </View>
         )}
-
       </ScrollView>
+
+      {/* ── PACKING ENGINE MODAL ── */}
+      <Modal visible={isPackingModalVisible} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <BlurView intensity={70} tint="light" style={[styles.modalContent, { maxHeight: '85%' }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Trip <Text style={{ fontStyle: 'italic', color: '#b8a8e8' }}>Packing</Text></Text>
+              <TouchableOpacity 
+                onPress={() => { setIsPackingModalVisible(false); setPackingResult(null); }} 
+                style={styles.iconBtn}
+              >
+                <Ionicons name="close" size={24} color="#6b6b6b" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
+              {!packingResult ? (
+                <>
+                  <View style={styles.field}>
+                    <Text style={styles.label}>Destination *</Text>
+                    <TextInput 
+                      style={styles.input} 
+                      placeholder="e.g. Goa, Paris, Tokyo" 
+                      placeholderTextColor="#a0a0a0" 
+                      value={packingForm.destination} 
+                      onChangeText={(t) => setPackingForm({...packingForm, destination: t})} 
+                    />
+                  </View>
+                  <View style={styles.field}>
+                    <Text style={styles.label}>Weather *</Text>
+                    <TextInput 
+                      style={styles.input} 
+                      placeholder="e.g. Hot & Humid, Chilly" 
+                      placeholderTextColor="#a0a0a0" 
+                      value={packingForm.weather} 
+                      onChangeText={(t) => setPackingForm({...packingForm, weather: t})} 
+                    />
+                  </View>
+                  <View style={styles.field}>
+                    <Text style={styles.label}>Duration (Days) *</Text>
+                    <TextInput 
+                      style={styles.input} 
+                      keyboardType="numeric" 
+                      value={packingForm.days} 
+                      onChangeText={(t) => setPackingForm({...packingForm, days: t})} 
+                    />
+                  </View>
+                  <View style={styles.field}>
+                    <Text style={styles.label}>Planned Events</Text>
+                    <TextInput 
+                      style={styles.input} 
+                      placeholder="e.g. Beach party, fine dining" 
+                      placeholderTextColor="#a0a0a0" 
+                      value={packingForm.events} 
+                      onChangeText={(t) => setPackingForm({...packingForm, events: t})} 
+                    />
+                  </View>
+
+                  <TouchableOpacity style={[styles.btnPrimaryFlex, { marginTop: 10 }]} onPress={handleGeneratePacking} disabled={packingLoading}>
+                    <LinearGradient colors={['#7b6cc8', '#e07090']} style={StyleSheet.absoluteFillObject} start={{x:0, y:0}} end={{x:1, y:1}} />
+                    {packingLoading ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <>
+                        <Feather name="zap" size={14} color="#fff" style={{ marginRight: 6 }} />
+                        <Text style={styles.btnPrimaryText}>Generate List</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <View>
+                  {Object.keys(packingResult).map((category) => (
+                    <View key={category} style={{ marginBottom: 18 }}>
+                      <Text style={styles.resultCategory}>{category}</Text>
+                      {Array.isArray(packingResult[category]) && packingResult[category].map((item, idx) => (
+                        <View key={idx} style={styles.resultItemRow}>
+                          <Feather name="check-circle" size={16} color="#7b6cc8" style={{ marginRight: 10 }} />
+                          <Text style={styles.resultItemText}>{item}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ))}
+                  <TouchableOpacity style={[styles.btnSecondary, { marginTop: 10 }]} onPress={() => setPackingResult(null)}>
+                    <Text style={styles.btnSecondaryText}>Plan Another Trip</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </ScrollView>
+          </BlurView>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: 'transparent', // Let global layout background show
-  },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 120, // Avoid overlap with custom tab bar
-  },
+  safeArea: { flex: 1, backgroundColor: 'transparent' },
+  scrollContent: { padding: 20, paddingBottom: 120 },
   
   // ── HEADER ──
-  header: {
-    marginBottom: 24,
-  },
-  title: {
-    fontFamily: 'System',
-    fontSize: 38,
-    fontWeight: '700',
-    color: '#000000',
-    letterSpacing: -0.5,
-  },
-  titleUnderline: {
-    height: 3,
-    width: 48,
-    borderRadius: 4,
-    marginTop: 6,
-    backgroundColor: '#9060d0', // Fallback
-  },
-  subtitle: {
-    color: '#6b6b6b',
-    fontSize: 13.5,
-    marginTop: 6,
-    letterSpacing: 0.1,
-  },
+  header: { marginBottom: 24 },
+  title: { fontFamily: 'System', fontSize: 38, fontWeight: '700', color: '#000000', letterSpacing: -0.5 },
+  titleUnderline: { height: 3, width: 48, borderRadius: 4, marginTop: 6, backgroundColor: '#9060d0' },
+  subtitle: { color: '#6b6b6b', fontSize: 13.5, marginTop: 6, letterSpacing: 0.1 },
 
   // ── TOGGLE ──
-  toggleContainer: {
-    marginBottom: 20,
-    borderRadius: 24,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.4)',
-    shadowColor: '#3c145a',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-  },
-  toggleBlur: {
-    flexDirection: 'row',
-    padding: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.35)',
-  },
-  toggleBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: 20,
-    gap: 7,
-    overflow: 'hidden',
-  },
-  toggleBtnActive: {
-    shadowColor: '#9060d0',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.45,
-    shadowRadius: 16,
-    elevation: 4,
-  },
-  toggleText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#6b6b6b',
-    zIndex: 1,
-  },
-  toggleTextActive: {
-    color: '#ffffff',
-    fontWeight: '600',
-  },
+  toggleContainer: { marginBottom: 20, borderRadius: 24, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.4)', shadowColor: '#3c145a', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 16 },
+  toggleBlur: { flexDirection: 'row', padding: 4, backgroundColor: 'rgba(255, 255, 255, 0.35)' },
+  toggleBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10, borderRadius: 20, gap: 7, overflow: 'hidden' },
+  toggleBtnActive: { shadowColor: '#9060d0', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.45, shadowRadius: 16, elevation: 4 },
+  toggleText: { fontSize: 14, fontWeight: '500', color: '#6b6b6b', zIndex: 1 },
+  toggleTextActive: { color: '#ffffff', fontWeight: '600' },
 
-  section: {
-    flex: 1,
-  },
+  section: { flex: 1 },
 
   // ── CALENDAR CARD ──
-  card: {
-    backgroundColor: 'rgba(255, 255, 255, 0.4)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.5)',
-    borderRadius: 20,
-    padding: 15,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-    shadowColor: '#502878',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 32,
-    elevation: 4,
-  },
-  cardLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 13,
-  },
-  cardIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 14,
-    backgroundColor: 'rgba(220, 210, 255, 0.7)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cardTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#1a1a1a',
-    marginBottom: 2,
-  },
-  cardSub: {
-    fontSize: 13,
-    color: '#6b6b6b',
-  },
-  cardRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  pulseDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#e87090',
-  },
+  card: { backgroundColor: 'rgba(255, 255, 255, 0.4)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.5)', borderRadius: 20, padding: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, shadowColor: '#502878', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 32, elevation: 4 },
+  cardLeft: { flexDirection: 'row', alignItems: 'center', gap: 13 },
+  cardIconWrap: { width: 40, height: 40, borderRadius: 14, backgroundColor: 'rgba(220, 210, 255, 0.7)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.5)', alignItems: 'center', justifyContent: 'center' },
+  cardTitle: { fontSize: 15, fontWeight: '600', color: '#1a1a1a', marginBottom: 2 },
+  cardSub: { fontSize: 13, color: '#6b6b6b' },
+  cardRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  pulseDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#e87090' },
 
   // ── CALENDAR EXPANDED BOX ──
-  calendarBox: {
-    borderRadius: 22,
-    marginBottom: 14,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.5)',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-  },
-  monthNav: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 14,
-    paddingBottom: 6,
-  },
-  navBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.6)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.8)',
-  },
-  monthTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1a1a1a',
-  },
-  weekStrip: {
-    paddingHorizontal: 14,
-    paddingBottom: 14,
-  },
-  dayPill: {
-    width: 50,
-    height: 76,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.45)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 8,
-    overflow: 'hidden',
-  },
-  dayPillActive: {
-    borderColor: 'rgba(255, 255, 255, 0.95)',
-    shadowColor: '#a078d0',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-  },
-  dayStr: {
-    fontSize: 10,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    color: '#8070a8',
-    marginBottom: 2,
-    zIndex: 2,
-  },
-  dayStrActive: {
-    color: '#9060d0',
-  },
-  dayNum: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#1a1a1a',
-    zIndex: 2,
-  },
-  dayNumActive: {
-    color: '#000',
-  },
-  todayDot: {
-    position: 'absolute',
-    top: 6,
-    right: 6,
-    width: 5,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: '#6dd8b8',
-    zIndex: 3,
-  },
-  plansSection: {
-    padding: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
-    borderTopWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.4)',
-  },
-  plansLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 1.5,
-    color: '#6b6b6b',
-    marginBottom: 10,
-  },
-  planEmpty: {
-    alignItems: 'center',
-    paddingVertical: 20,
-  },
-  planEmptyText: {
-    fontSize: 13,
-    color: '#6b6b6b',
-    fontWeight: '500',
-    marginBottom: 4,
-  },
-  planEmptySub: {
-    fontSize: 11,
-    color: '#a0a0a0',
-  },
-  addPlanBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.55)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.8)',
-    borderStyle: 'dashed',
-    borderRadius: 16,
-    padding: 12,
-    gap: 8,
-  },
-  addPlanText: {
-    fontSize: 13.5,
-    fontWeight: '600',
-    color: '#6b6b6b',
-  },
+  calendarBox: { borderRadius: 22, marginBottom: 14, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.5)', backgroundColor: 'rgba(255, 255, 255, 0.2)' },
+  monthNav: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 14, paddingBottom: 6 },
+  navBtn: { width: 32, height: 32, borderRadius: 10, backgroundColor: 'rgba(255, 255, 255, 0.6)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.8)' },
+  monthTitle: { fontSize: 18, fontWeight: '600', color: '#1a1a1a' },
+  weekStrip: { paddingHorizontal: 14, paddingBottom: 14 },
+  dayPill: { width: 50, height: 76, borderRadius: 16, backgroundColor: 'rgba(255, 255, 255, 0.45)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.5)', alignItems: 'center', justifyContent: 'center', marginRight: 8, overflow: 'hidden' },
+  dayPillActive: { borderColor: 'rgba(255, 255, 255, 0.95)', shadowColor: '#a078d0', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10 },
+  dayStr: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase', color: '#8070a8', marginBottom: 2, zIndex: 2 },
+  dayStrActive: { color: '#9060d0' },
+  dayNum: { fontSize: 20, fontWeight: '700', color: '#1a1a1a', zIndex: 2 },
+  dayNumActive: { color: '#000' },
+  todayDot: { position: 'absolute', top: 6, right: 6, width: 5, height: 5, borderRadius: 3, backgroundColor: '#6dd8b8', zIndex: 3 },
+  plansSection: { padding: 14, backgroundColor: 'rgba(255, 255, 255, 0.25)', borderTopWidth: 1, borderColor: 'rgba(255, 255, 255, 0.4)' },
+  plansLabel: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1.5, color: '#6b6b6b', marginBottom: 10 },
+  planEmpty: { alignItems: 'center', paddingVertical: 20 },
+  planEmptyText: { fontSize: 13, color: '#6b6b6b', fontWeight: '500', marginBottom: 4 },
+  planEmptySub: { fontSize: 11, color: '#a0a0a0' },
+  addPlanBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255, 255, 255, 0.55)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.8)', borderStyle: 'dashed', borderRadius: 16, padding: 12, gap: 8 },
+  addPlanText: { fontSize: 13.5, fontWeight: '600', color: '#6b6b6b' },
 
   // ── GRID CARDS ──
-  itemsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  vcard: {
-    width: (width - 52) / 2, // 2 columns minus padding/gap
-    borderRadius: 22,
-    padding: 16,
-    paddingTop: 18,
-    minHeight: 130,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.6)',
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-    shadowColor: '#502878',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.1,
-    shadowRadius: 24,
-    elevation: 3,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  vcardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-    zIndex: 5,
-  },
-  vcardBadge: {
-    backgroundColor: 'rgba(255, 255, 255, 0.65)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.8)',
-  },
-  vcardBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#6b6b6b',
-  },
-  vcardTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1a1a1a',
-    marginBottom: 4,
-    zIndex: 5,
-  },
-  vcardSub: {
-    fontSize: 11.5,
-    color: '#6b6b6b',
-    lineHeight: 16,
-    zIndex: 5,
-    flex: 1,
-  },
-  vcardArrow: {
-    position: 'absolute',
-    bottom: 14,
-    right: 14,
-    width: 22,
-    height: 22,
-    borderRadius: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.6)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 5,
-  }
+  itemsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 12 },
+  vcard: { width: (width - 52) / 2, borderRadius: 22, padding: 16, paddingTop: 18, minHeight: 130, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.6)', backgroundColor: 'rgba(255, 255, 255, 0.3)', shadowColor: '#502878', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.1, shadowRadius: 24, elevation: 3, overflow: 'hidden', position: 'relative' },
+  vcardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12, zIndex: 5 },
+  vcardBadge: { backgroundColor: 'rgba(255, 255, 255, 0.65)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.8)' },
+  vcardBadgeText: { fontSize: 10, fontWeight: '700', color: '#6b6b6b' },
+  vcardTitle: { fontSize: 14, fontWeight: '700', color: '#1a1a1a', marginBottom: 4, zIndex: 5 },
+  vcardSub: { fontSize: 11.5, color: '#6b6b6b', lineHeight: 16, zIndex: 5, flex: 1 },
+  vcardArrow: { position: 'absolute', bottom: 14, right: 14, width: 22, height: 22, borderRadius: 8, backgroundColor: 'rgba(255, 255, 255, 0.6)', alignItems: 'center', justifyContent: 'center', zIndex: 5 },
+
+  // ── MODAL STYLES (Copied from Wardrobe for consistency) ──
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(20, 12, 36, 0.4)', justifyContent: 'flex-end' },
+  modalContent: { borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 24, backgroundColor: 'rgba(255, 255, 255, 0.85)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.95)' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  modalTitle: { fontSize: 26, color: '#1a1a1a', fontWeight: '300' },
+  iconBtn: { padding: 4 },
+  field: { marginBottom: 18 },
+  label: { fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.2, color: '#6b6b6b', marginBottom: 8 },
+  input: { backgroundColor: 'rgba(255, 255, 255, 0.65)', borderWidth: 1, borderColor: 'rgba(190, 170, 230, 0.3)', padding: 14, borderRadius: 14, fontSize: 14, color: '#1a1a1a' },
+  btnPrimaryFlex: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 14, borderRadius: 100, overflow: 'hidden' },
+  btnPrimaryText: { color: '#fff', fontSize: 12, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' },
+  btnSecondary: { flexDirection: 'row', paddingVertical: 14, borderRadius: 100, backgroundColor: 'rgba(255, 255, 255, 0.6)', borderWidth: 1, borderColor: 'rgba(190, 170, 230, 0.3)', alignItems: 'center', justifyContent: 'center' },
+  btnSecondaryText: { color: '#6b6b6b', fontSize: 12, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' },
+  
+  // ── RESULTS STYLES ──
+  resultCategory: { fontSize: 13, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, color: '#b8a8e8', marginBottom: 10 },
+  resultItemRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, paddingHorizontal: 4 },
+  resultItemText: { fontSize: 15, color: '#1a1a1a', fontWeight: '400' }
 });

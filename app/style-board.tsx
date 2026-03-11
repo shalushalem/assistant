@@ -73,7 +73,7 @@ const StyleBoardScreen = () => {
       const itemNames = selectedItems.map(i => i.name);
       
       try {
-        const nameRes = await fetch('http://192.168.29.193:8000/api/name-outfit', { 
+        const nameRes = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/api/name-outfit`, { 
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ items: itemNames })
