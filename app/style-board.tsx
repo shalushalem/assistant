@@ -21,9 +21,29 @@ const getCategoryGroup = (category = '', name = '') => {
     'bottom', 'pant', 'jeans', 'skirt', 'short', 'trouser', 'cargo', 'legging', 'sweatpant', 'denim', 'churidar', 'salwar'
   ];
 
-  // If it's clothing, it goes in the main left column. Otherwise (shoes, bags, watches), it goes to the right.
   if (apparelKeywords.some(kw => textToSearch.includes(kw))) return 'apparel';
   return 'accessory';
+};
+
+// 🟢 STRICT VISUAL SORTING FOR THE LEFT COLUMN (Masterpiece on top, Bottom below)
+const getApparelWeight = (category = '', name = '') => {
+  const cat = category.toLowerCase();
+  const text = name.toLowerCase();
+  
+  if (cat === 'dresses' || ['dress', 'saree', 'gown', 'suit', 'jumpsuit'].some(kw => text.includes(kw))) return 1;
+  if (cat === 'tops' || ['top', 'shirt', 'blouse', 't-shirt', 'jacket', 'sweater'].some(kw => text.includes(kw))) return 2;
+  if (cat === 'bottoms' || ['bottom', 'pant', 'jeans', 'skirt', 'short', 'trouser'].some(kw => text.includes(kw))) return 3;
+  
+  return 4; 
+};
+
+// 🟢 STRICT VISUAL SORTING FOR RIGHT COLUMN (Accessories top, Footwear bottom)
+const getAccessoryWeight = (category = '', name = '') => {
+  const cat = category.toLowerCase();
+  const text = name.toLowerCase();
+  
+  if (cat === 'footwear' || ['shoe', 'sneaker', 'heel', 'boot', 'sandal'].some(kw => text.includes(kw))) return 2;
+  return 1; 
 };
 
 interface WardrobeItem {
@@ -62,7 +82,10 @@ const StyleBoardScreen = () => {
       const response = await databases.listDocuments(
         appwriteConfig.databaseId!,
         appwriteConfig.outfitCollectionId!, 
-        [Query.equal('user_id', user.$id)]
+        [
+          Query.equal('user_id', user.$id),
+          Query.limit(5000) // 🟢 FETCHES ENTIRE WARDROBE
+        ]
       );
 
       const allItems = response.documents as unknown as WardrobeItem[];
@@ -98,7 +121,6 @@ const StyleBoardScreen = () => {
       const shuffledOutfit = items.map(currentItem => {
         if (lockedIds.includes(currentItem.$id)) return currentItem;
 
-        // Shuffle within the same broad group (apparel -> apparel, accessory -> accessory)
         const currentGroup = getCategoryGroup(currentItem.category, currentItem.name);
         const alternatives = fullWardrobe.filter(wardrobeItem => 
           getCategoryGroup(wardrobeItem.category, wardrobeItem.name) === currentGroup && 
@@ -156,9 +178,13 @@ const StyleBoardScreen = () => {
     }, 150);
   };
 
-  // 🚀 DYNAMIC FILTERING: No more `.find()`, we use `.filter()` to capture ALL items sent!
-  const apparelItems = items.filter(item => getCategoryGroup(item.category, item.name) === 'apparel');
-  const accessoryAndFootwearItems = items.filter(item => getCategoryGroup(item.category, item.name) === 'accessory');
+  const apparelItems = items
+    .filter(item => getCategoryGroup(item.category, item.name) === 'apparel')
+    .sort((a, b) => getApparelWeight(a.category, a.name) - getApparelWeight(b.category, b.name));
+
+  const accessoryAndFootwearItems = items
+    .filter(item => getCategoryGroup(item.category, item.name) === 'accessory')
+    .sort((a, b) => getAccessoryWeight(a.category, a.name) - getAccessoryWeight(b.category, b.name));
 
   const renderLockableItem = (item: WardrobeItem, containerStyle: any) => {
     const isLocked = lockedIds.includes(item.$id);
@@ -209,19 +235,16 @@ const StyleBoardScreen = () => {
             selectionColor="#e07090"
           />
 
-          {/* ── COLLAGE BOARD ── */}
           <View ref={viewRef} style={styles.collageContainer}>
             <LinearGradient colors={['#fdfbfb', '#f5f7fa']} style={StyleSheet.absoluteFillObject} />
             <View style={styles.decorativeCircle} />
 
             <View style={styles.collageBoard}>
               
-              {/* 🚀 DYNAMIC LEFT COLUMN: Maps all apparel, naturally distributing vertical height */}
               <View style={styles.leftCol}>
                 {apparelItems.map((item) => renderLockableItem(item, styles.dynamicMainPiece))}
               </View>
 
-              {/* 🚀 DYNAMIC RIGHT COLUMN: Maps all footwear and accessories */}
               <View style={styles.rightCol}>
                 {accessoryAndFootwearItems.map((item) => renderLockableItem(item, styles.collageSmallPiece))}
               </View>
@@ -233,7 +256,6 @@ const StyleBoardScreen = () => {
             </View>
           </View>
 
-          {/* ── ACTION BUTTONS ── */}
           <View style={styles.actionRow}>
             <TouchableOpacity style={styles.btnSecondary} onPress={handleShuffle} disabled={isShuffling || items.length === 0}>
               <Feather name="shuffle" size={16} color="#6b6b6b" style={{ marginRight: 8 }} />
@@ -277,7 +299,7 @@ const styles = StyleSheet.create({
   },
 
   collageContainer: {
-    width: width - 40, height: 480, borderRadius: 24, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(190, 170, 230, 0.2)',
+    width: width - 40, minHeight: 480, borderRadius: 24, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(190, 170, 230, 0.2)',
     shadowColor: '#7850B4', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.15, shadowRadius: 20, elevation: 5,
     marginBottom: 20, backgroundColor: '#fff',
   },
@@ -289,9 +311,8 @@ const styles = StyleSheet.create({
   
   imageFull: { width: '100%', height: '100%', zIndex: 2 },
   
-  // 🚀 KEY CHANGE HERE: We use `flex: 1` so it dynamically shares the column space!
   dynamicMainPiece: { flex: 1, width: '100%', position: 'relative', marginVertical: 5 },
-  collageSmallPiece: { width: '90%', height: 100, position: 'relative' },
+  collageSmallPiece: { flex: 1, width: '90%', position: 'relative', marginVertical: 5, minHeight: 80 },
   
   lockedBorder: { borderColor: '#e07090', borderWidth: 2, borderRadius: 12, backgroundColor: 'rgba(224, 112, 144, 0.05)' },
   lockIconOverlay: { position: 'absolute', top: 6, right: 6, width: 20, height: 20, borderRadius: 10, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', zIndex: 10, shadowColor: '#e07090', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4 },
