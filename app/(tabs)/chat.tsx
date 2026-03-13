@@ -10,8 +10,7 @@ import {
   Platform,
   FlatList,
   Keyboard,
-  Animated,
-  Image
+  Animated
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
@@ -32,7 +31,9 @@ interface Message {
   hasActions?: boolean;
   images?: string[];
   boardIds?: string; 
-  chips?: string[]; // 🟢 Added chips array to the Message interface
+  packIds?: string; // 🚀 NEW: For the packing menu
+  fullMenuText?: string; // 🚀 NEW: To pass the hidden text to the menu card
+  chips?: string[]; 
 }
 
 const OCCASIONS = [
@@ -130,11 +131,12 @@ export default function Chat() {
 
       const data = await response.json();
       
-      // 🟢 PARSING LOGIC: Extract tags from the raw text
       let rawText = data.message?.content || "I'm having trouble thinking right now.";
       let cleanText = rawText;
       let extractedChips: string[] = [];
-      let extractedBoardData = data.board_ids || null; // Fallback to structured JSON if it exists
+      let extractedBoardData = data.board_ids || null; 
+      let extractedPackData = null;
+      let hiddenMenuText = "";
 
       // Extract [CHIPS: ...]
       const chipsMatch = rawText.match(/\[CHIPS:\s*(.*?)\]/);
@@ -149,16 +151,26 @@ export default function Chat() {
         extractedBoardData = boardMatch[1];
         cleanText = cleanText.replace(boardMatch[0], '').trim();
       }
+
+      // 🚀 THE MAGIC TRICK: Extract [PACK_LIST: ...] and HIDE the text
+      const packMatch = rawText.match(/\[PACK_LIST:\s*(.*?)\]/);
+      if (packMatch) {
+        extractedPackData = packMatch[1];
+        hiddenMenuText = cleanText.replace(packMatch[0], '').trim(); // Save the giant text list
+        cleanText = "I've prepared your custom Packing Menu! Tap below to see the full list and visual vibe. 🌴✨"; // Replace bubble text!
+      }
       
       const newAiMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        text: cleanText, // The text without the ugly bracket tags
+        text: cleanText, 
         time: getTime(),
-        hasActions: !!extractedBoardData || (data.images && data.images.length > 0),
+        hasActions: !!extractedBoardData || !!extractedPackData,
         images: data.images,
         boardIds: extractedBoardData, 
-        chips: extractedChips // Store the extracted chips
+        packIds: extractedPackData,
+        fullMenuText: hiddenMenuText,
+        chips: extractedChips 
       };
       
       setMessages(prev => [...prev, newAiMsg]);
@@ -219,22 +231,17 @@ export default function Chat() {
               <BlurView intensity={30} tint="light" style={styles.bubbleAi}>
                 {item.text.length > 0 && <Text style={styles.bubbleTextAi}>{item.text}</Text>}
                 
-                {/* 🟢 RENDER DYNAMIC CHIPS IF VAGUE INTENT */}
                 {item.chips && item.chips.length > 0 && (
                   <View style={styles.dynamicChipsWrap}>
                     {item.chips.map((chip, idx) => (
-                      <TouchableOpacity 
-                        key={idx} 
-                        style={styles.dynamicChip} 
-                        onPress={() => handleSend(chip)}
-                      >
+                      <TouchableOpacity key={idx} style={styles.dynamicChip} onPress={() => handleSend(chip)}>
                         <Text style={styles.dynamicChipText}>{chip}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
                 )}
 
-                {/* 🟢 RENDER THE VIEW STYLE BOARD BUTTON */}
+                {/* 🚀 Render Style Board Button */}
                 {item.boardIds ? (
                   <View style={{ marginTop: 8 }}>
                     <TouchableOpacity 
@@ -244,6 +251,20 @@ export default function Chat() {
                       <LinearGradient colors={['#7b6cc8', '#e07090']} style={StyleSheet.absoluteFillObject} start={{x:0, y:0}} end={{x:1, y:1}} />
                       <Feather name="layout" size={14} color="#fff" />
                       <Text style={styles.boardLinkBtnText}>View Style Board</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+
+                {/* 🚀 Render Packing Menu Button */}
+                {item.packIds ? (
+                  <View style={{ marginTop: 8 }}>
+                    <TouchableOpacity 
+                      style={styles.boardLinkBtn}
+                      onPress={() => router.push({ pathname: '/packing-board', params: { ids: item.packIds, text: item.fullMenuText } })}
+                    >
+                      <LinearGradient colors={['#7b6cc8', '#e07090']} style={StyleSheet.absoluteFillObject} start={{x:0, y:0}} end={{x:1, y:1}} />
+                      <Feather name="briefcase" size={14} color="#fff" />
+                      <Text style={styles.boardLinkBtnText}>Open Packing Menu</Text>
                     </TouchableOpacity>
                   </View>
                 ) : null}
@@ -401,15 +422,11 @@ const styles = StyleSheet.create({
   bubbleAi: { paddingVertical: 12, paddingHorizontal: 15, backgroundColor: 'rgba(255, 255, 255, 0.6)' },
   bubbleTextAi: { fontSize: 13.5, color: '#3a2050', lineHeight: 20, marginBottom: 8 },
   bubbleAvatarAi: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(255, 255, 255, 0.6)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.8)', alignItems: 'center', justifyContent: 'center' },
-  
-  // 🟢 NEW: DYNAMIC CHIPS STYLES
   dynamicChipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4, marginBottom: 4 },
   dynamicChip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20, backgroundColor: 'rgba(144, 96, 208, 0.12)', borderWidth: 1, borderColor: 'rgba(144, 96, 208, 0.25)' },
   dynamicChipText: { fontSize: 11, fontWeight: '600', color: '#7b6cc8' },
-
   boardLinkBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 100, overflow: 'hidden', shadowColor: '#7850B4', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 4 },
   boardLinkBtnText: { fontSize: 12, fontWeight: '700', color: '#fff', textTransform: 'uppercase', letterSpacing: 0.5 },
-  
   bubbleTime: { fontSize: 10, color: '#b8aed0', marginTop: 4, paddingHorizontal: 4 },
   typingBubble: { paddingVertical: 14, paddingHorizontal: 18, borderRadius: 18, borderBottomLeftRadius: 5, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(255, 255, 255, 0.6)', borderWidth: 1, borderColor: 'rgba(255, 255, 255, 0.7)' },
   typingDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#9060d0' },
